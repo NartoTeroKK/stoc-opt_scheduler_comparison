@@ -160,16 +160,16 @@ def plot_global_comparison(
     show: bool = False,
 ) -> Figure:
     """
-    Level 1: (1,2) subplots - loss + LR overview.
+    Level 1: (2, 1) subplots — loss curve overview + LR schedules.
 
-    Left: train_loss mean±std (10 curves: 5 schedulers × 2 optimizers)
-    Right: learning_rate mean (same visual encoding, no std band)
-    Optional gray dashed line at y = L_star + epsilon.
+    Top subplot:    train_loss mean per config (10 curves: 5 schedulers × 2 optimizers).
+    Bottom subplot: learning_rate mean per config (same visual encoding, no std band).
+                    Y-axis in log scale to highlight schedule shape differences.
     """
     _setup_style()
-    fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+    fig, axes = plt.subplots(2, 1, figsize=(14, 10))  # stacked vertically
 
-    # Collect all configs
+    # Collect all unique (scheduler, optimizer) configs from run names
     configs = []
     for run_name in results:
         parsed = _parse_run_name(run_name)
@@ -179,7 +179,7 @@ def plot_global_comparison(
         if (sched, opt) not in configs:
             configs.append((sched, opt))
 
-    # Left: train_loss
+    # Top: train_loss mean curves
     ax = axes[0]
     for sched, opt in configs:
         key = f"{opt}_{sched}"
@@ -199,7 +199,7 @@ def plot_global_comparison(
     ax.legend(loc="upper right")
     ax.grid(True, alpha=0.3)
 
-    # Right: learning_rate
+    # Bottom: learning_rate mean curves (log scale, no std band)
     ax = axes[1]
     for sched, opt in configs:
         key = f"{opt}_{sched}"
@@ -222,13 +222,11 @@ def plot_global_comparison(
     ax.legend(loc="lower left")
     ax.grid(True, alpha=0.3)
 
-
     add_figure_title(
         fig,
         title=f"{problem_type.upper()} - Global Comparison",
-        subtitle="Left: Training Loss with std bands | Right: Learning Rate schedules"
+        subtitle="Top: Training Loss curves | Bottom: Learning Rate schedules (log scale)",
     )
-
 
     if save_path:
         _save(fig, save_path)
