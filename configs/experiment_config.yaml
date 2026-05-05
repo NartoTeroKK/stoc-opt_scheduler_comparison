@@ -1,0 +1,40 @@
+seeds: [6, 22, 84, 165, 405, 440, 492, 561, 910, 947]
+test_size: 0.2
+epochs: 100
+experiments:
+  convex:
+    model: logistic
+    dataset: breast_cancer
+  non-convex:
+    model: mlp
+    dataset: mnist
+lr:
+  sgd: 0.01
+  adam: 0.001
+# Scheduler specific parameters
+scheduler_params: 
+  none: {}
+  exponential:
+    gamma: 0.95
+  cosine:
+    T_max: 50
+    eta_min: 1e-6
+  cyclic:
+    base_lr: 0.001
+    max_lr: 0.1
+    step_size_up: # to define in code
+    mode: triangular2
+  one-cycle:
+    max_lr: 0.1
+    total_steps: # to define in code
+    pct_start: 0.3
+    anneal_strategy: cos
+# Paths
+paths:
+  data_dir: "data/processed"
+  reports_dir: "reports"
+  figures_dir: "reports/figures"
+# Enums
+schedulers: [none, cosine, exponential, cyclic, one-cycle]
+optimizers: [sgd, adam]
+experiment_name: scheduler_comparison_v3

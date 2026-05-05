@@ -1,65 +1,56 @@
-# Byte-compiled / optimized / DLL files
+# ── Python ──────────────────────────────────────────────
 __pycache__/
 *.py[cod]
-*$py.class
+*.pyo
+*.pyd
+.pytest*
 
-# C extensions
-*.so
-
-# Distribution / packaging
+# ── Build / packaging ────────────────────────────────────
 build/
 dist/
 *.egg-info/
 *.egg
 
-# Virtual environments
+# ── Ambienti virtuali ────────────────────────────────────
 .venv/
 venv/
-ENV/
+env/
 
-# Installer logs
-pip-log.txt
-pip-delete-this-directory.txt
+# ── Jupyter ──────────────────────────────────────────────
+.ipynb_checkpoints/
+notebooks/.ipynb_checkpoints/
 
-# Unit test / coverage reports
-htmlcov/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-.hypothesis/
-.pytest_cache/
+# ── MLflow ───────────────────────────────────────────────
+mlruns/**         
+!mlruns/           
 
-# Jupyter Notebook checkpoints
-.ipynb_checkpoints
+# ── Dati (file binari pesanti, non versionabili) ─────────
+data/mnist/
+data/processed/
 
-# MLflow tracking directory
-mlruns/
+# ── Risultati e plot temporanei ──────────────────────────
+results/
+test_plots/
+test_plots_final/
+test_plots_v2/
+test_plots_v3/
 
-# Logs
-logs/
-*.log
-
-# IDE/editor settings
-.vscode/
+# ── IDE e OS ─────────────────────────────────────────────
 .idea/
-
-# macOS files
+.vscode/
+*.code-workspace
 .DS_Store
-
-# uv configuration
-.uv/
-uv.lock
+Thumbs.db
 
 # Claude Code
 /.claude
 CLAUDE.md
 gestore_ambiente_python.md
 infrastruttura_framework_libs.md
-
-# VS Code Workspace
-stoc-opt_scheduler_comparison.code-workspace
-
-.worktrees
+# Agent Documentation
+docs/agent/
+# Open Code
+.opencode/
+AGENTS.md
+.tmp/
+.github/
