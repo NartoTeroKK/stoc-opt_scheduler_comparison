@@ -285,8 +285,16 @@ def compute_all_metrics(
         "SI_asymptotic": round(si["SI_asymptotic"], 6),
     }
 
+def _is_valid(v) -> bool:
+    if v is None:
+        return False
+    try:
+        return not np.isnan(v)
+    except (TypeError, ValueError):
+        return True  # non-float (es. bool, str) sono sempre validi
+
 # Metriche con aggregazione standard: media + std
-STANDARD_METRICS = ["AUL", "AUL_norm", "rho_hat", "R2", "RV", "CV_final", "SI_asymptotic",
+STANDARD_METRICS = ["AUL", "AUL_norm", "rho_hat", "R2", "RV", "CV_final", "SI", "SI_asymptotic",
                     "test_loss", "test_accuracy"]
 
 def aggregate_metrics(metrics_dict: dict[str, dict]) -> dict:
@@ -318,15 +326,15 @@ def aggregate_metrics(metrics_dict: dict[str, dict]) -> dict:
         # EtT separato: media + std + mediana + n_converged
         for metric_key in STANDARD_METRICS:
             if metric_key in all_keys:
-                values = [m[metric_key] for m in group
-                        if metric_key in m and m[metric_key] is not None]
+                values = [m[metric_key] for m in group if metric_key in m and _is_valid(m[metric_key])]
+
                 if values:
                     agg[f"{metric_key}_mean"] = float(np.mean(values))
                     agg[f"{metric_key}_std"]  = float(np.std(values))
 
         # EtT: aggregazione robusta
         ett_all = [m["EtT"] for m in group if "EtT" in m]
-        ett_valid = [v for v in ett_all if v is not None and not np.isnan(v)]
+        ett_valid = [v for v in ett_all if _is_valid(v)]
 
         n_total = len(ett_all)
         n_valid = len(ett_valid)

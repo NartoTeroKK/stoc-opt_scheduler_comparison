@@ -409,7 +409,7 @@ def plot_seed_variance(
     add_figure_title(
         fig,
         title=f"{problem_type.upper()} - Seed Variance Analysis",
-        subtitle="Each subplot: 5 thin seed lines + 1 thick mean line | dashed = convergence threshold",
+        subtitle="Each subplot: 10 thin seed lines + 1 thick mean line | dashed = convergence threshold",
     )
 
     if save_path:
@@ -566,10 +566,10 @@ def plot_loss_lr_dual(
     """
     _setup_style()
 
-    fig, axes = plt.subplots(2, 5, figsize=(28, 10), sharex=True)
+    fig, axes = plt.subplots(5, 2, figsize=(12, 20), sharex=True)
     axes = axes.flatten() if hasattr(axes, "flatten") else axes.ravel()
 
-    for idx, (opt, sched) in enumerate([(o, s) for o in OPTIMIZERS_LIST for s in SCHEDULERS_LIST]):
+    for idx, (opt, sched) in enumerate([(o, s) for s in SCHEDULERS_LIST for o in OPTIMIZERS_LIST]):
         ax = axes[idx]
         key = f"{opt}_{sched}"
 
@@ -608,7 +608,7 @@ def plot_loss_lr_dual(
     add_figure_title(
         fig,
         title=f"{problem_type.upper()} - Loss & Learning Rate Dual Axis",
-        subtitle="Each subplot: Loss (left axis, colored) + LR (right axis, orange dashed)"
+        subtitle="Each subplot: Loss (left axis) + LR (right axis, dotted)"
     )
     
     if save_path:
@@ -715,11 +715,11 @@ def plot_scheduler_optimizer_heatmap(
         ax.set_ylabel("Scheduler")
 
         # Add title and subtitle
-        add_figure_title(
-            fig,
-            title=f"{problem_type.upper()} - {metric.removesuffix('_mean').replace('_', ' ').title()}",
-            subtitle=f"Rows: Schedulers | Columns: Optimizers",
-        )
+        # add_figure_title(
+        #     fig,
+        #     title=f"{problem_type.upper()} - {metric.removesuffix('_mean').replace('_', ' ').title()}",
+        #     subtitle=f"Rows: Schedulers | Columns: Optimizers",
+        # )
         
         if save_path:
             metric_suffix = metric.replace("_mean", "").lower()
