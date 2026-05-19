@@ -2,6 +2,7 @@
 from .engine import train_one_epoch, evaluate, train_loop
 from .optimizers import get_optimizer
 from .schedulers import get_scheduler, NoneScheduler
+from .lstar import compute_convex_L_star, compute_nonconvex_L_star
 
 __all__ = [
     "train_one_epoch",
@@ -10,4 +11,6 @@ __all__ = [
     "get_optimizer",
     "get_scheduler",
     "NoneScheduler",
+    "compute_convex_L_star",
+    "compute_nonconvex_L_star",
 ]

@@ -10,7 +10,15 @@ from .convergence import (
     compute_convergence_metrics,
     aggregate_metrics,
     compute_all_metrics,
-    compute_L_star_global
+    compute_L_star_global,
+    compute_global_initial_loss,
+    compute_target_loss,
+    compute_suboptimality_gap,
+    compute_epochs_to_target,
+    build_convergence_dataframe,
+    compute_all_e_target_levels,
+    CONVEX_E_TARGET_LEVELS,
+    NONCONVEX_E_TARGET_LEVELS,
 )
 
 __all__ = [
@@ -22,5 +30,13 @@ __all__ = [
     "compute_convergence_metrics",
     "aggregate_metrics",
     "compute_all_metrics",
-    "compute_L_star_global"
+    "compute_L_star_global",
+    "compute_global_initial_loss",
+    "compute_target_loss",
+    "compute_suboptimality_gap",
+    "compute_epochs_to_target",
+    "build_convergence_dataframe",
+    "compute_all_e_target_levels",
+    "CONVEX_E_TARGET_LEVELS",
+    "NONCONVEX_E_TARGET_LEVELS",
 ]

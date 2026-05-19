@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections import defaultdict
 
 import numpy as np
+import pandas as pd
 from scipy import stats
 import numpy.typing as npt
 
@@ -262,12 +263,13 @@ def compute_all_metrics(
     window_frac: float = 0.15,
     warm_up: int = 5,
 ) -> dict:
-    """Compute all six metrics for a single run. Returns flat dict."""
+    """Compute all convergence metrics for a single run. Returns flat dict."""
     ett = epochs_to_threshold(loss_curve, L_star_global, epsilon, relative_epsilon)
     aul, aul_n = area_under_loss(loss_curve, L_star_global)
     conv = empirical_convergence_rate(loss_curve, L_star_global, warm_up)
     rv_cv = rolling_variance_cv(loss_curve, window_frac)
     si = smoothness_index(loss_curve)
+    subopt_gap = compute_suboptimality_gap(loss_curve, L_star_global)
 
     return {
         "train_losses_arr": loss_curve,
@@ -283,6 +285,7 @@ def compute_all_metrics(
         "mu_final": round(rv_cv["mu_final"], 6),
         "SI": round(si["SI"], 6),
         "SI_asymptotic": round(si["SI_asymptotic"], 6),
+        "suboptimality_gap": round(subopt_gap, 8),
     }
 
 def _is_valid(v) -> bool:
@@ -295,7 +298,7 @@ def _is_valid(v) -> bool:
 
 # Metriche con aggregazione standard: media + std
 STANDARD_METRICS = ["AUL", "AUL_norm", "rho_hat", "R2", "RV", "CV_final", "SI", "SI_asymptotic",
-                    "test_loss", "test_accuracy"]
+                    "test_loss", "test_accuracy", "suboptimality_gap"]
 
 def aggregate_metrics(metrics_dict: dict[str, dict]) -> dict:
     """
@@ -373,3 +376,160 @@ def aggregate_metrics(metrics_dict: dict[str, dict]) -> dict:
         aggregated[key] = agg
 
     return aggregated
+
+
+# ── E_target and Sub-optimality Gap ──────────────────────────────────────────
+
+
+def compute_global_initial_loss(results_by_problem: dict) -> float:
+    """Compute the global initial loss (L0) across all runs at epoch 0.
+
+    L0 is the empirical mean of the first recorded loss value across every
+    seed and configuration within a problem type. It serves as the baseline
+    for defining the global target loss (L_target).
+    """
+    losses: list[float] = []
+    for history in results_by_problem.values():
+        if history is not None and history.train_losses:
+            losses.append(history.train_losses[0])
+    if not losses:
+        return float("nan")
+    return float(np.mean(losses))
+
+
+def compute_target_loss(L_star: float, L0: float, epsilon: float) -> float:
+    """Compute the global target loss for convergence analysis.
+
+    Formula: L_target = L_star + epsilon * (L0 - L_star)
+
+    Args:
+        L_star: Reference minimum loss.
+        L0: Global initial loss (mean across all runs at epoch 0).
+        epsilon: Relative tolerance level (e.g., 0.01 for 1% gap).
+
+    Returns:
+        Target loss threshold value.
+    """
+    return L_star + epsilon * (L0 - L_star)
+
+
+def compute_suboptimality_gap(loss_curve: FloatArray, L_star: float) -> float:
+    """Compute the sub-optimality gap: difference between final loss and L*."""
+    final_loss = float(loss_curve[-1])
+    return final_loss - L_star
+
+
+def compute_epochs_to_target(
+    loss_curve: FloatArray,
+    L_target: float,
+    max_epochs: int,
+) -> int:
+    """Find the first epoch where loss falls below L_target.
+
+    Returns the epoch index (0-indexed) of the first occurrence.
+    If the target is never reached, returns max_epochs (timeout).
+    """
+    indices = np.where(loss_curve <= L_target)[0]
+    if len(indices) > 0:
+        return int(indices[0])
+    return max_epochs
+
+
+# ── E_target Level Constants ────────────────────────────────────────────────
+
+CONVEX_E_TARGET_LEVELS: dict[str, float] = {
+    "E_target_lv1": 1e-2,
+    "E_target_lv2": 1e-3,
+    "E_target_lv3": 1e-4,
+}
+
+NONCONVEX_E_TARGET_LEVELS: dict[str, float] = {
+    "E_target_lv1": 0.01,
+    "E_target_lv2": 0.025,
+    "E_target_lv3": 0.05,
+}
+
+
+def build_convergence_dataframe(
+    results_by_problem: dict,
+    L_star: float,
+    epsilon: float,
+    max_epochs: int,
+    parse_run_name_fn=None,
+) -> pd.DataFrame:
+    """Build a DataFrame for convergence boxplot visualization.
+
+    For each configuration (optimizer+scheduler), extracts the first epoch
+    index where each seed's loss falls below L_target. Seeds that never
+    converge are assigned a timeout value equal to max_epochs.
+
+    Args:
+        results_by_problem: {run_name: TrainingHistory} dict.
+        L_star: Reference minimum loss.
+        epsilon: Relative tolerance level.
+        max_epochs: Maximum training epochs (timeout value).
+        parse_run_name_fn: Custom run name parser (optional).
+
+    Returns:
+        DataFrame with columns: Configuration, Seed, Epochs_to_Target.
+    """
+    L0 = compute_global_initial_loss(results_by_problem)
+    if np.isnan(L0):
+        return pd.DataFrame(columns=["Configuration", "Seed", "Epochs_to_Target"])
+
+    L_target = compute_target_loss(L_star, L0, epsilon)
+
+    if parse_run_name_fn is None:
+        parse_run_name_fn = _parse_run_name
+
+    records: list[dict] = []
+
+    for run_name, history in results_by_problem.items():
+        parsed = parse_run_name_fn(run_name)
+        if parsed is None:
+            continue
+        _, sched, opt, seed = parsed
+        if history is None or history.train_losses_arr.size == 0:
+            continue
+
+        config_name = f"{opt}_{sched}"
+        k_target = compute_epochs_to_target(
+            history.train_losses_arr, L_target, max_epochs,
+        )
+
+        records.append({
+            "Configuration": config_name,
+            "Seed": seed,
+            "Epochs_to_Target": k_target,
+            "_L_target": L_target,
+        })
+
+    if not records:
+        return pd.DataFrame(columns=["Configuration", "Seed", "Epochs_to_Target"])
+
+    return pd.DataFrame(records)
+
+
+def compute_all_e_target_levels(
+    results_by_problem: dict,
+    L_star: float,
+    max_epochs: int,
+    levels: dict[str, float],
+) -> dict[str, pd.DataFrame]:
+    """Compute E_target DataFrames for all specified tolerance levels.
+
+    Args:
+        results_by_problem: {run_name: TrainingHistory} dict.
+        L_star: Reference minimum loss.
+        max_epochs: Maximum training epochs.
+        levels: Dict mapping level names to epsilon values.
+
+    Returns:
+        Dict of {level_name: DataFrame} with convergence data.
+    """
+    return {
+        name: build_convergence_dataframe(
+            results_by_problem, L_star, eps, max_epochs,
+        )
+        for name, eps in levels.items()
+    }

@@ -5,9 +5,11 @@ experiments:
   convex:
     model: logistic
     dataset: breast_cancer
+    epochs: 50
   non-convex:
     model: mlp
     dataset: mnist
+    epochs: 100
 lr:
   sgd: 0.01
   adam: 0.001
@@ -15,18 +17,17 @@ lr:
 scheduler_params: 
   none: {}
   exponential:
-    gamma: 0.95
+    gamma: # to define in code
   cosine:
-    T_max: 50
+    T_max: # to define in code
     eta_min: 1e-6
   cyclic:
-    base_lr: 0.001
+    base_lr: # to define in code
     max_lr: 0.1
     step_size_up: # to define in code
-    mode: triangular2
+    mode: triangular
   one-cycle:
     max_lr: 0.1
-    total_steps: # to define in code
     pct_start: 0.3
     anneal_strategy: cos
 # Paths

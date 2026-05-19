@@ -22,7 +22,11 @@ import seaborn as sns
 from matplotlib.figure import Figure
 
 from stoc_opt_scheduler_comparison.utils import viz_logger as logger
-from stoc_opt_scheduler_comparison.evaluation.convergence import convergence_threshold
+from stoc_opt_scheduler_comparison.evaluation.convergence import (
+    convergence_threshold,
+    compute_global_initial_loss,
+    compute_target_loss,
+)
 
 # ── Visual Encoding ─────────────────────────────────────────────────────────
 
@@ -44,8 +48,13 @@ SEED_STYLE: dict[str, dict[str, float]] = {
     "mean": {"linewidth": 2, "alpha": 1.0},
 }
 
-SCHEDULERS_LIST=["none", "exponential", "cosine", "cyclic", "one-cycle"]
-OPTIMIZERS_LIST=["sgd", "adam"]
+SCHEDULERS_LIST = ["none", "exponential", "cosine", "cyclic", "one-cycle"]
+OPTIMIZERS_LIST = ["sgd", "adam"]
+
+# E_target threshold line styles (3 levels: strict, moderate, permissive)
+E_TARGET_COLORS: list[str] = ["#d62728", "#ff7f0e", "#2ca02c"]
+E_TARGET_LINESTYLES: list[str] = ["--", "-.", ":"]
+E_TARGET_LABELS: list[str] = ["lv1 (strict)", "lv2 (moderate)", "lv3 (permissive)"]
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -241,6 +250,9 @@ def plot_by_optimizer(
     results: dict,
     aggregated: dict,
     problem_type: str,
+    L_star: float | None = None,
+    L0: float | None = None,
+    e_target_levels: dict[str, float] | None = None,
     save_path: str | Path | None = None,
     show: bool = False,
 ) -> Figure:
@@ -250,10 +262,19 @@ def plot_by_optimizer(
     Each subplot shows 5 scheduler curves with mean±std from aggregated arrays.
     Left column: linear scale.
     Right column: log scale for loss.
+
+    If L_star, L0, and e_target_levels are provided, horizontal threshold lines
+    are drawn at the computed L_target values for each tolerance level.
     """
     _setup_style()
     fig, axes = plt.subplots(2, 2, figsize=(16, 12))
     axes = axes.flatten()
+
+    # Pre-compute E_target threshold values if parameters provided
+    e_target_values: list[float] = []
+    if L_star is not None and L0 is not None and e_target_levels is not None:
+        for eps in e_target_levels.values():
+            e_target_values.append(compute_target_loss(L_star, L0, eps))
 
     for idx, opt in enumerate(OPTIMIZERS_LIST):
         # Left column: linear scale
@@ -272,10 +293,19 @@ def plot_by_optimizer(
             ax_linear.fill_between(epochs, mean_arr - std_arr, mean_arr + std_arr,
                                    color=color, alpha=style["alpha_std"])
 
+        # E_target threshold lines on linear subplot
+        for i, L_target in enumerate(e_target_values):
+            ax_linear.axhline(
+                y=L_target, color=E_TARGET_COLORS[i],
+                linestyle=E_TARGET_LINESTYLES[i], linewidth=1.0, alpha=0.7,
+                label=f"E_target {E_TARGET_LABELS[i]}" if idx == 0 else "",
+            )
+        if idx == 0 and e_target_values:
+            ax_linear.legend(loc="upper right")
+
         ax_linear.set_xlabel("Epoch")
         ax_linear.set_ylabel("Training Loss")
         ax_linear.set_title(f"{problem_type.upper()} - {opt.upper()} (Linear Scale)")
-        ax_linear.legend(loc="upper right")
         ax_linear.grid(True, alpha=0.3)
 
         # Right column: log scale
@@ -294,18 +324,30 @@ def plot_by_optimizer(
             ax_log.fill_between(epochs, mean_arr - std_arr, mean_arr + std_arr,
                                    color=color, alpha=style["alpha_std"])
 
+        # E_target threshold lines on log subplot
+        for i, L_target in enumerate(e_target_values):
+            ax_log.axhline(
+                y=L_target, color=E_TARGET_COLORS[i],
+                linestyle=E_TARGET_LINESTYLES[i], linewidth=1.0, alpha=0.7,
+            )
+
         ax_log.set_xlabel("Epoch")
         ax_log.set_ylabel("Training Loss (log scale)")
         ax_log.set_title(f"{problem_type.upper()} - {opt.upper()} (Log Scale)")
         ax_log.set_yscale("log")
-        ax_log.legend(loc="upper right")
         ax_log.grid(True, alpha=0.3)
 
-    # Add overall figure title with subtitle
+    # Build subtitle with E_target info
+    e_target_subtitle = ""
+    if e_target_values:
+        level_names = list(e_target_levels.keys()) if e_target_levels else []
+        vals_str = ", ".join(f"{n}={v:.6f}" for n, v in zip(level_names, e_target_values))
+        e_target_subtitle = f" | E_target thresholds: {vals_str}"
+
     add_figure_title(
         fig,
         title=f"{problem_type.upper()} - Loss Curves by Optimizer",
-        subtitle="Left: Linear scale | Right: Log scale"
+        subtitle=f"Left: Linear scale | Right: Log scale{e_target_subtitle}"
     )        
 
     if save_path:
@@ -321,6 +363,8 @@ def plot_seed_variance(
     results: dict,
     problem_type: str,
     L_star_global: float | None = None, 
+    L0: float | None = None,
+    e_target_levels: dict[str, float] | None = None,
     save_path: str | Path | None = None,
     show: bool = False,
 ) -> Figure:
@@ -330,12 +374,20 @@ def plot_seed_variance(
     Each cell (scheduler, optimizer): 5 thin seed lines + 1 thick mean line.
     Optional dashed convergence threshold line per cell (computed via
     convergence_threshold using the mean L0 of the seed group).
+    If L0 and e_target_levels are provided, global E_target threshold lines
+    are drawn across all cells.
     No rolling mean - raw arrays only.
     """
     _setup_style()
 
     fig, axes = plt.subplots(5, 2, figsize=(12, 20), sharex=True, sharey=False)
     axes = axes.flatten() if hasattr(axes, "flatten") else axes.ravel()
+
+    # Pre-compute global E_target threshold values
+    e_target_values: list[float] = []
+    if L_star_global is not None and L0 is not None and e_target_levels is not None:
+        for eps in e_target_levels.values():
+            e_target_values.append(compute_target_loss(L_star_global, L0, eps))
 
     all_loss_values = []
 
@@ -382,7 +434,6 @@ def plot_seed_variance(
                         linewidth=0.9,
                         alpha=0.8,
                     )
-                    # Annotazione con il valore numerico, allineata a destra
                     ax.annotate(
                         f"ε={thresh:.4f}",
                         xy=(0.0, thresh),
@@ -395,6 +446,13 @@ def plot_seed_variance(
                         color="black",
                     )
 
+            # --- Global E_target threshold lines ---
+            for i, L_target in enumerate(e_target_values):
+                ax.axhline(
+                    y=L_target, color=E_TARGET_COLORS[i],
+                    linestyle=E_TARGET_LINESTYLES[i], linewidth=0.8, alpha=0.6,
+                )
+
         ax.set_title(f"{sched} ({opt})", fontsize=11)
         ax.grid(True, alpha=0.3)
         if idx % 2 == 0:
@@ -406,11 +464,103 @@ def plot_seed_variance(
     for ax in axes:
         ax.set_ylim(y_min, y_max)
 
+    # Build subtitle with E_target info
+    subtitle = "Each subplot: 10 thin seed lines + 1 thick mean line | dashed = per-cell threshold"
+    if e_target_values:
+        level_names = list(e_target_levels.keys()) if e_target_levels else []
+        vals_str = ", ".join(f"{n}={v:.6f}" for n, v in zip(level_names, e_target_values))
+        subtitle += f"\nGlobal E_target: {vals_str}"
+
     add_figure_title(
         fig,
         title=f"{problem_type.upper()} - Seed Variance Analysis",
-        subtitle="Each subplot: 10 thin seed lines + 1 thick mean line | dashed = convergence threshold",
+        subtitle=subtitle,
     )
+
+    if save_path:
+        _save(fig, save_path)
+    if show:
+        plt.show()
+    return fig
+
+# ── Convergence Boxplot (Epochs-to-Target) ─────────────────────────────
+
+def plot_convergence_boxplot(
+    df_convergence: pd.DataFrame,
+    problem_type: str,
+    L_target: float,
+    max_epochs: int = 100,
+    save_path: str | Path | None = None,
+    show: bool = False,
+) -> Figure:
+    """
+    Boxplot of epochs-to-target (K_target) distribution per configuration.
+
+    Visualizes the convergence speed and stability across seeds for each
+    optimizer+scheduler combination. Each box shows the IQR of epochs
+    needed to fall below L_target, with individual seed values overlaid.
+
+    Args:
+        df_convergence: DataFrame with columns [Configuration, Seed, Epochs_to_Target].
+        problem_type: "convex" or "non-convex" (for plot title).
+        L_target: Target loss value used for the threshold.
+        max_epochs: Maximum training epochs (used for y-limit and timeout line).
+        save_path: Optional path to save the figure.
+        show: Whether to display the plot.
+
+    Returns:
+        matplotlib Figure object.
+    """
+    _setup_style()
+
+    fig, ax = plt.subplots(1, 1, figsize=(14, 7))
+
+    # Boxplot: distribution of epochs-to-target per configuration
+    sns.boxplot(
+        data=df_convergence,
+        x="Configuration",
+        y="Epochs_to_Target",
+        hue="Configuration",
+        palette="viridis",
+        width=0.45,
+        linewidth=1.5,
+        showfliers=False,
+        legend=False,
+        ax=ax,
+    )
+
+    # Stripplot: individual seed values overlaid
+    sns.stripplot(
+        data=df_convergence,
+        x="Configuration",
+        y="Epochs_to_Target",
+        color="black",
+        alpha=0.6,
+        size=6,
+        jitter=0.15,
+        ax=ax,
+    )
+
+    # Labels and layout
+    ax.set_title(
+        f"{problem_type.upper()} - Convergence Velocity (Time-to-Target)",
+        fontsize=16, fontweight='bold', pad=20,
+    )
+    ax.set_xlabel("Optimizer + Scheduler Combinations", fontsize=14, labelpad=15)
+    ax.set_ylabel(f"Epochs to Reach Target ({L_target:.4f})", fontsize=14, labelpad=15)
+    ax.set_xticklabels(ax.get_xticklabels(), rotation=30, ha="right")
+    ax.set_ylim(-5, max_epochs + 5)
+
+    # Timeout line
+    ax.axhline(
+        y=max_epochs, color='crimson', linestyle='--', alpha=0.4,
+        linewidth=1.5, label=f'Training Limit (Max Epochs = {max_epochs})',
+    )
+    ax.legend(loc='upper right', fontsize=10)
+
+    ax.grid(True, alpha=0.3, axis="y")
+
+    fig.tight_layout()
 
     if save_path:
         _save(fig, save_path)
@@ -740,21 +890,25 @@ def plot_all(
     aggregated: dict,
     problem_type: str,
     L_star_global: float | None = None,
+    L0: float | None = None,
+    e_target_levels: dict[str, float] | None = None,
     epsilon: float | None = None,
     save_dir: str | Path | None = None,
     show: bool = False,
 ) -> list[str]:
     """
-    Entry point: generate all 6 plots with standardized naming.
+    Entry point: generate all standard plots with standardized naming.
 
     Args:
         results_by_problem: results[problem_type] dict
         aggregated: pre-computed aggregated dict from aggregate_metrics()
         problem_type: "convex" or "non-convex"
-        L_star: optional, for Level 1 horizontal line
-        epsilon: optional, for Level 1 horizontal line
-        save_dir: directory to save plots
-        show: whether to display plots
+        L_star_global: optional reference minimum loss for threshold lines.
+        L0: optional global initial loss for E_target computation.
+        e_target_levels: optional dict of {name: epsilon} for E_target thresholds.
+        epsilon: optional, for convergence threshold display.
+        save_dir: directory to save plots.
+        show: whether to display plots.
 
     Returns:
         List of saved file paths.
@@ -777,18 +931,23 @@ def plot_all(
     )
     saved_files.append(str(save_dir / f"{problem_type}_level1_global_comparison.png"))
     
-    # Level 2: By Optimizer (2x2 layout)
+    # Level 2: By Optimizer (2x2 layout) - with E_target thresholds if available
     plot_by_optimizer(
         results_by_problem, aggregated, problem_type,
+        L_star=L_star_global,
+        L0=L0,
+        e_target_levels=e_target_levels,
         save_path=save_dir / f"{problem_type}_level2_by_optimizer.png",
         show=show
     )
     saved_files.append(str(save_dir / f"{problem_type}_level2_by_optimizer.png"))
     
-    # Level 3: Seed Variance
+    # Level 3: Seed Variance - with E_target thresholds if available
     plot_seed_variance(
         results_by_problem, problem_type,
         L_star_global=L_star_global,
+        L0=L0,
+        e_target_levels=e_target_levels,
         save_path=save_dir / f"{problem_type}_level3_seed_variance.png",
         show=show
     )

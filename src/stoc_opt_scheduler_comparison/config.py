@@ -26,10 +26,18 @@ class SchedulerParams:
 
 @dataclass(frozen=True)
 class ExperimentDef:
-    """Definition of a single experiment (model + dataset pair)."""
+    """Definition of a single experiment (model + dataset pair).
+    
+    Attributes:
+        model: Model architecture name.
+        dataset: Dataset name.
+        batch_size: Batch size for data loading.
+        epochs: Number of epochs (overrides global config.epochs if set).
+    """
     model: str
     dataset: str
     batch_size: int
+    epochs: int | None = None
 
 
 @dataclass(frozen=True)
@@ -111,12 +119,14 @@ def _parse_raw(raw: dict[str, Any]) -> dict[str, Any]:
     )
 
     # Experiments
+    global_epochs = int(raw.get("epochs", 100))
     exp_raw = raw.get("experiments", {})
     parsed["experiments"] = {
     name: ExperimentDef(
         model=defn["model"],
         dataset=defn["dataset"],
-        batch_size=int(defn.get("batch_size", 128)),  # ← per-esperimento con fallback
+        batch_size=int(defn.get("batch_size", 128)),  # per-experiment with global fallback
+        epochs=int(defn["epochs"]) if "epochs" in defn else None,  # None = use global epochs
     )
     for name, defn in exp_raw.items()
 }

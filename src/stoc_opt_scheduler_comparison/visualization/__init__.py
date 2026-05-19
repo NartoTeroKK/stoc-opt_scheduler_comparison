@@ -7,6 +7,7 @@ from .plots import (
     plot_final_performance,
     plot_loss_lr_dual,
     plot_scheduler_optimizer_heatmap,
+    plot_convergence_boxplot,
 )
 
 __all__ = [
@@ -17,4 +18,5 @@ __all__ = [
     "plot_final_performance",
     "plot_loss_lr_dual",
     "plot_scheduler_optimizer_heatmap",
+    "plot_convergence_boxplot",
 ]
