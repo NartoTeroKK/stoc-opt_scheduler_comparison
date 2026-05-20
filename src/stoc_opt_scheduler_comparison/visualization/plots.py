@@ -274,7 +274,7 @@ def plot_by_optimizer(
     e_target_values: list[float] = []
     if L_star is not None and L0 is not None and e_target_levels is not None:
         for eps in e_target_levels.values():
-            e_target_values.append(compute_target_loss(L_star, L0, eps))
+            e_target_values.append(compute_target_loss(L_star, eps, problem_type, L0))
 
     for idx, opt in enumerate(OPTIMIZERS_LIST):
         # Left column: linear scale
@@ -387,7 +387,7 @@ def plot_seed_variance(
     e_target_values: list[float] = []
     if L_star_global is not None and L0 is not None and e_target_levels is not None:
         for eps in e_target_levels.values():
-            e_target_values.append(compute_target_loss(L_star_global, L0, eps))
+            e_target_values.append(compute_target_loss(L_star_global, eps, problem_type, L0))
 
     all_loss_values = []
 
@@ -548,7 +548,12 @@ def plot_convergence_boxplot(
     )
     ax.set_xlabel("Optimizer + Scheduler Combinations", fontsize=14, labelpad=15)
     ax.set_ylabel(f"Epochs to Reach Target ({L_target:.4f})", fontsize=14, labelpad=15)
-    ax.set_xticklabels(ax.get_xticklabels(), rotation=30, ha="right")
+    
+    # FIX: Safely rotate and align categorical labels without triggering UserWarning
+    ax.tick_params(axis='x', rotation=30)
+    for label in ax.get_xticklabels():
+        label.set_horizontalalignment('right')
+        
     ax.set_ylim(-5, max_epochs + 5)
 
     # Timeout line

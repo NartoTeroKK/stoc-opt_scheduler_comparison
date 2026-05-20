@@ -22,6 +22,8 @@ from stoc_opt_scheduler_comparison.evaluation.metrics import TrainingHistory
 
 def compute_convex_L_star(
     test_size: float = 0.2,
+    tollerance: float = 1e-9,
+    max_iter: int = 500,
     seed: int = 42,
 ) -> float:
     """
@@ -43,8 +45,8 @@ def compute_convex_L_star(
     clf = LogisticRegression(
         solver='lbfgs',
         penalty=None,
-        max_iter=10000,
-        tol=1e-12,
+        max_iter=max_iter,
+        tol=tollerance,
         random_state=seed,
     )
     clf.fit(ds.X_train, ds.y_train)
@@ -77,7 +79,7 @@ def _find_best_config(results_by_problem: dict) -> tuple[str, str, float]:
     return best_opt, best_sched, best_loss
 
 
-def compute_nonconvex_L_star(
+def compute_empirical_L_star(
     results_by_problem: dict,
     exp_def,
     scheduler_params: dict,
@@ -133,11 +135,16 @@ def compute_nonconvex_L_star(
     optimizer = get_optimizer(model, name=best_opt, lr=lr)
 
     sched_params = dict(scheduler_params.get(best_sched, {}))
+    if best_sched == "exponential":
+        target_drop = 100.0
+        sched_params["gamma"] = (1.0 / target_drop) ** (1.0 / extended_epochs)
+    if best_sched == "cosine":
+        sched_params["T_max"] = extended_epochs
     if best_sched == "one-cycle":
-        sched_params["total_steps"] = extended_epochs * len(dataloaders["train"])
-        if best_opt == "adam":
-            sched_params["cycle_momentum"] = False
+        sched_params["epochs"] = extended_epochs
+        sched_params["steps_per_epoch"] = len(dataloaders["train"])
     if best_sched == "cyclic":
+        sched_params["base_lr"] = lr
         sched_params["step_size_up"] = 2 * len(dataloaders["train"])
 
     scheduler = get_scheduler(optimizer, name=best_sched, **sched_params)
