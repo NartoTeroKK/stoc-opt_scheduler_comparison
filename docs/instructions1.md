@@ -47,6 +47,7 @@ You need to revise the convergence metric computation logic to comply with acade
        - Training accuracy  
        - Test accuracy  
 
+Some implementation is being manually modified by me based on well-founded reasons and because I think it is more correct and standard. Please note these changes and do not revert what I changed from the previous agent edit run.
 Ensure that naming conventions for metrics and columns are consistent across all tables and that the new logic is fully integrated into the experiment pipeline before generating the tables.
 Ensure that all changes are thoroughly tested to confirm that the new convergence metrics are computed correctly on the average loss curves and that the E_target metric is accurately calculated based on the defined L_target.
 Ensure that the final tables in the notebook are well-formatted and clearly present the new metrics for analysis.

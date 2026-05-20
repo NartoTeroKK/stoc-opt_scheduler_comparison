@@ -447,13 +447,7 @@ def compute_epochs_to_target(
 
 # ── E_target Level Constants ────────────────────────────────────────────────
 
-CONVEX_E_TARGET_LEVELS: dict[str, float] = {
-    "E_target_lv1": 0.05,
-    "E_target_lv2": 0.025,
-    "E_target_lv3": 0.01,
-}
-
-NONCONVEX_E_TARGET_LEVELS: dict[str, float] = {
+E_TARGET_LEVELS: dict[str, float] = {
     "E_target_lv1": 0.05,
     "E_target_lv2": 0.025,
     "E_target_lv3": 0.01,
@@ -512,7 +506,7 @@ def build_convergence_dataframe(
             "Configuration": config_name,
             "Seed": seed,
             "Epochs_to_Target": k_target,
-            "_L_target": L_target,
+            "L_target": L_target,
         })
 
     if not records:
@@ -545,3 +539,96 @@ def compute_all_e_target_levels(
         )
         for name, eps in levels.items()
     }
+
+
+# ── Aggregated Curve Metrics ──────────────────────────────────────────────
+
+
+def compute_aggregated_config_metrics(
+    aggregated: dict[str, dict],
+    per_run_metrics: dict[str, dict],
+    L_star: float,
+    L0: float,
+    problem_type: str,
+    max_epochs: int,
+    e_target_epsilon: float = 0.05,
+) -> pd.DataFrame:
+    """Compute convergence metrics on per-configuration AVERAGE loss curves.
+
+    For each (optimizer, scheduler) configuration:
+      1. Compute suboptimality_gap, AUL_norm, CV_final, SI_asymptotic, RV
+         on the MEAN loss curve (aggregated across seeds).
+      2. Compute E_target at the specified tolerance (default lv1 = 0.05).
+      3. Count converging runs from per-run final losses <= L_target.
+
+    Returns a DataFrame with one row per configuration, sorted by E_target.
+
+    Per-run scalar means (test_loss, test_accuracy) are taken from the
+    aggregated dict to avoid re-aggregating.
+    """
+    # L_target for the given tolerance
+    L_target = compute_target_loss(L_star, e_target_epsilon, problem_type, L0)
+    params = _DEFAULT_PARAMS.get(problem_type, {})
+
+    # Group per-run metrics by configuration for convergence counting
+    config_runs: dict[str, list[dict]] = defaultdict(list)
+    for run_name, m in per_run_metrics.items():
+        cfg = f"{m['optimizer']}_{m['scheduler']}"
+        config_runs[cfg].append(m)
+
+    records: list[dict] = []
+    for config_name, curves in aggregated.items():
+        if "train_losses_mean" not in curves:
+            continue
+
+        mean_curve = curves["train_losses_mean"]
+
+        # All metrics on the mean curve
+        metrics = compute_all_metrics(
+            loss_curve=mean_curve,
+            train_accuracies=curves.get("train_accuracies_mean", np.array([])),
+            lr_history=curves.get("learning_rates_mean", np.array([])),
+            L_star_global=L_star,
+            **params,
+        )
+
+        # E_target at specified tolerance on the mean curve
+        e_target = compute_epochs_to_target(mean_curve, L_target, max_epochs)
+
+        # Count converging runs: final loss <= L_target
+        runs = config_runs.get(config_name, [])
+        n_cvg = 0
+        for run in runs:
+            arr = run.get("train_losses_arr", np.array([]))
+            if len(arr) > 0 and arr[-1] <= L_target:
+                n_cvg += 1
+        n_total = curves.get("n_runs", len(runs))
+
+        # Parse optimizer / scheduler
+        parts = config_name.split("_", 1)
+        opt = parts[0]
+        sched = parts[1] if len(parts) > 1 else ""
+
+        records.append({
+            "optimizer": opt,
+            "scheduler": sched,
+            "n_runs": n_total,
+            "n_converging_runs": n_cvg,
+            "suboptimality_gap": round(metrics["suboptimality_gap"], 8),
+            "AUL_norm": round(metrics["AUL_norm"], 6),
+            "E_target": e_target,
+            "CV_final": round(metrics["CV_final"], 6),
+            "SI_asymptotic": round(metrics["SI_asymptotic"], 6),
+            "RV": round(metrics["RV"], 10),
+            "test_loss": round(curves.get("test_loss_mean", float("nan")), 6),
+            "test_accuracy": round(curves.get("test_accuracy_mean", float("nan")), 6),
+            "L_target": L_target,
+        })
+
+    if not records:
+        return pd.DataFrame()
+    
+    df = pd.DataFrame(records)
+    # Sort: converging configs first (by E_target), then non-converging
+    df = df.sort_values("E_target", ascending=True).reset_index(drop=True)
+    return df

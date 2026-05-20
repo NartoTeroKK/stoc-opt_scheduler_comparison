@@ -5,7 +5,7 @@ experiments:
   convex:
     model: logistic
     dataset: breast_cancer
-    epochs: 50
+    epochs: 100
   non-convex:
     model: mlp
     dataset: mnist
@@ -25,7 +25,7 @@ scheduler_params:
     base_lr: # to define in code
     max_lr: 0.1
     step_size_up: # to define in code
-    mode: triangular
+    mode: triangular2
   one-cycle:
     max_lr: 0.1
     pct_start: 0.3
@@ -38,4 +38,4 @@ paths:
 # Enums
 schedulers: [none, cosine, exponential, cyclic, one-cycle]
 optimizers: [sgd, adam]
-experiment_name: scheduler_comparison_v3
+experiment_name: scheduler_comparison_v4

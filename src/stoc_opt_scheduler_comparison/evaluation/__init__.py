@@ -17,8 +17,8 @@ from .convergence import (
     compute_epochs_to_target,
     build_convergence_dataframe,
     compute_all_e_target_levels,
-    CONVEX_E_TARGET_LEVELS,
-    NONCONVEX_E_TARGET_LEVELS,
+    compute_aggregated_config_metrics,
+    E_TARGET_LEVELS,
 )
 
 __all__ = [
@@ -37,6 +37,6 @@ __all__ = [
     "compute_epochs_to_target",
     "build_convergence_dataframe",
     "compute_all_e_target_levels",
-    "CONVEX_E_TARGET_LEVELS",
-    "NONCONVEX_E_TARGET_LEVELS",
+    "compute_aggregated_config_metrics",
+    "E_TARGET_LEVELS",
 ]

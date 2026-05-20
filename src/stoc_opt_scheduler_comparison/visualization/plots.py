@@ -20,6 +20,7 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 from matplotlib.figure import Figure
+from matplotlib.lines import Line2D
 
 from stoc_opt_scheduler_comparison.utils import viz_logger as logger
 from stoc_opt_scheduler_comparison.evaluation.convergence import (
@@ -45,16 +46,20 @@ OPTIMIZER_STYLES: dict[str, dict[str, Any]] = {
 
 SEED_STYLE: dict[str, dict[str, float]] = {
     "individual": {"linewidth": 1, "alpha": 0.5},
-    "mean": {"linewidth": 2, "alpha": 1.0},
+    "mean": {"linewidth": 2.5, "alpha": 1.0},
 }
 
 SCHEDULERS_LIST = ["none", "exponential", "cosine", "cyclic", "one-cycle"]
 OPTIMIZERS_LIST = ["sgd", "adam"]
 
 # E_target threshold line styles (3 levels: strict, moderate, permissive)
-E_TARGET_COLORS: list[str] = ["#d62728", "#ff7f0e", "#2ca02c"]
-E_TARGET_LINESTYLES: list[str] = ["--", "-.", ":"]
-E_TARGET_LABELS: list[str] = ["lv1 (strict)", "lv2 (moderate)", "lv3 (permissive)"]
+E_TARGET_COLORS: list[str] = [
+    "#bf75f0",  # lv1 (5%): Viola Chiaro / Malva (Soglia più alta, facile da superare)
+    "#7b3fa7",  # lv2 (2.5%): Viola Medio / Lavanda d'Europa
+    "#742465",  # lv3 (1%): Viola Scuro / Bizantino (Traguardo finale, asintotico)
+]
+E_TARGET_LINESTYLES: list[str] = ["-.", "-.", "-."]
+E_TARGET_LABELS: list[str] = ["lv1 (permissive)", "lv2 (moderate)", "lv3 (strict)"]
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -419,33 +424,6 @@ def plot_seed_variance(
                 alpha=SEED_STYLE["mean"]["alpha"],
             )
 
-            # --- Convergence threshold line (per-cell) ---
-            if L_star_global is not None:
-                L0_ref = float(np.mean([arr[0] for arr in seed_arrays]))
-                thresh = convergence_threshold(
-                    L0=L0_ref,
-                    L_star_global=L_star_global
-                )
-                if not np.isnan(thresh):
-                    ax.axhline(
-                        y=thresh,
-                        color="black",
-                        linestyle=":",
-                        linewidth=0.9,
-                        alpha=0.8,
-                    )
-                    ax.annotate(
-                        f"ε={thresh:.4f}",
-                        xy=(0.0, thresh),
-                        xycoords=("axes fraction", "data"),
-                        xytext=(4, 2),
-                        textcoords="offset points",
-                        ha="left",
-                        va="bottom",
-                        fontsize=6,
-                        color="black",
-                    )
-
             # --- Global E_target threshold lines ---
             for i, L_target in enumerate(e_target_values):
                 ax.axhline(
@@ -494,86 +472,133 @@ def plot_convergence_boxplot(
     show: bool = False,
 ) -> Figure:
     """
-    Boxplot of epochs-to-target (K_target) distribution per configuration.
-
-    Visualizes the convergence speed and stability across seeds for each
-    optimizer+scheduler combination. Each box shows the IQR of epochs
-    needed to fall below L_target, with individual seed values overlaid.
-
-    Args:
-        df_convergence: DataFrame with columns [Configuration, Seed, Epochs_to_Target].
-        problem_type: "convex" or "non-convex" (for plot title).
-        L_target: Target loss value used for the threshold.
-        max_epochs: Maximum training epochs (used for y-limit and timeout line).
-        save_path: Optional path to save the figure.
-        show: Whether to display the plot.
-
-    Returns:
-        matplotlib Figure object.
+    Boxplot raggruppato (Hue=Optimizer, X=Scheduler).
+    Calcola la statistica del boxplot SOLO sulle run convergenti.
+    I Timeout sono tracciati manualmente con offset precisi per mantenere 
+    il layout intatto anche quando intere categorie falliscono.
     """
-    _setup_style()
-
     fig, ax = plt.subplots(1, 1, figsize=(14, 7))
+    opt_palette = {"ADAM": "#2b83ba", "SGD": "#d7191c"}
 
-    # Boxplot: distribution of epochs-to-target per configuration
+    # 1. Definizione Categorie (Garantisce ordine asse X)
+    sched_order = df_convergence["Scheduler"].unique()
+    opt_order = ["ADAM", "SGD"]
+    
+    df_convergence["Scheduler"] = pd.Categorical(df_convergence["Scheduler"], categories=sched_order, ordered=True)
+    df_convergence["Optimizer"] = pd.Categorical(df_convergence["Optimizer"], categories=opt_order, ordered=True)
+
+    # 2. Separazione Dati IBRIDA (La vera magia)
+    is_timeout = (df_convergence["Epochs_to_Target"] >= max_epochs) | (df_convergence["Epochs_to_Target"].isna())
+    
+    # A) Per SEABORN (Boxplot e punti neri): NON eliminiamo le righe. 
+    # Mettiamo a NaN i timeout. Così Seaborn riserva lo slot ma non disegna nulla.
+    df_converged = df_convergence.copy()
+    df_converged.loc[is_timeout, "Epochs_to_Target"] = np.nan
+    
+    # B) Per MATPLOTLIB (Le 'X' rosse): Filtriamo e teniamo solo i veri timeout.
+    df_timeout = df_convergence[is_timeout].copy()
+
+    # 3. PLOT 1: Boxplot e Stripplot dei Convergenti
+    # Ora passiamo df_converged con i NaN. Seaborn manterrà l'architettura intatta.
     sns.boxplot(
-        data=df_convergence,
-        x="Configuration",
+        data=df_converged,
+        x="Scheduler",
         y="Epochs_to_Target",
-        hue="Configuration",
-        palette="viridis",
-        width=0.45,
+        hue="Optimizer",
+        hue_order=opt_order,
+        palette=opt_palette,
+        width=0.6,
         linewidth=1.5,
         showfliers=False,
-        legend=False,
         ax=ax,
     )
 
-    # Stripplot: individual seed values overlaid
     sns.stripplot(
-        data=df_convergence,
-        x="Configuration",
+        data=df_converged,
+        x="Scheduler",
         y="Epochs_to_Target",
-        color="black",
+        hue="Optimizer",
+        hue_order=opt_order,
+        dodge=True,
+        palette={opt: "black" for opt in opt_order},
         alpha=0.6,
-        size=6,
+        size=5,
         jitter=0.15,
         ax=ax,
+        legend=False,
     )
 
-    # Labels and layout
+    # 4. PLOT 2: PLOT MANUALE DEI TIMEOUT (La Soluzione)
+    if not df_timeout.empty:
+        # Creiamo un dizionario che mappa ogni scheduler alla sua coordinata X (0, 1, 2, 3...)
+        x_map = {sched: i for i, sched in enumerate(sched_order)}
+        
+        # Definiamo lo spostamento orizzontale (dodge)
+        # Se usiamo width=0.6 nel boxplot, il centro del boxplot di sinistra è a -0.15, quello di destra a +0.15
+        offset_map = {"ADAM": -0.15, "SGD": 0.15}
+
+        for _, row in df_timeout.iterrows():
+            sched = row["Scheduler"]
+            opt = row["Optimizer"]
+            
+            # Calcoliamo la posizione X esatta
+            base_x = x_map[sched]
+            offset = offset_map[opt]
+            
+            # Aggiungiamo un leggero jitter manuale orizzontale per non sovrapporre le X
+            jitter = np.random.uniform(-0.05, 0.05) 
+            final_x = base_x + offset + jitter
+            
+            # Tracciamo la singola X
+            ax.plot(
+                final_x, max_epochs,
+                marker="X",
+                color=opt_palette[opt], # Coloriamo la X col colore dell'ottimizzatore per maggiore chiarezza
+                markersize=7,
+                alpha=0.9,
+                linestyle='None'
+            )
+
+    # 5. Legenda (Pulita)
+    handles, labels = ax.get_legend_handles_labels()
+    unique_handles = handles[:2]
+    unique_labels = labels[:2]
+
+    if not df_timeout.empty:
+        timeout_handle = Line2D(
+            [0], [0], marker='X', color='w', 
+            markerfacecolor='gray', markersize=8
+        )
+        unique_handles.append(timeout_handle)
+        unique_labels.append('Timeout (Non Converso)')
+
+    ax.legend(
+        unique_handles, unique_labels, 
+        title="Legenda", loc='upper center', 
+        bbox_to_anchor=(0.5, -0.15), ncol=3, frameon=False
+    )
+
+    # 6. Layout e Assi
     ax.set_title(
         f"{problem_type.upper()} - Convergence Velocity (Time-to-Target)",
         fontsize=16, fontweight='bold', pad=20,
     )
-    ax.set_xlabel("Optimizer + Scheduler Combinations", fontsize=14, labelpad=15)
+    ax.set_xlabel("Learning Rate Scheduler", fontsize=14, labelpad=15)
     ax.set_ylabel(f"Epochs to Reach Target ({L_target:.4f})", fontsize=14, labelpad=15)
+    ax.tick_params(axis='x', rotation=0, labelsize=12)
     
-    # FIX: Safely rotate and align categorical labels without triggering UserWarning
-    ax.tick_params(axis='x', rotation=30)
-    for label in ax.get_xticklabels():
-        label.set_horizontalalignment('right')
-        
-    ax.set_ylim(-5, max_epochs + 5)
-
-    # Timeout line
-    ax.axhline(
-        y=max_epochs, color='crimson', linestyle='--', alpha=0.4,
-        linewidth=1.5, label=f'Training Limit (Max Epochs = {max_epochs})',
-    )
-    ax.legend(loc='upper right', fontsize=10)
-
+    ax.set_ylim(-2, max_epochs + 5)
+    ax.axhline(y=max_epochs, color='gray', linestyle='--', alpha=0.5, linewidth=1.5, zorder=0)
     ax.grid(True, alpha=0.3, axis="y")
-
     fig.tight_layout()
 
     if save_path:
-        _save(fig, save_path)
+        plt.savefig(save_path, bbox_inches='tight', dpi=300)
     if show:
         plt.show()
+        
+    plt.close(fig)
     return fig
-
-
 # ── Level 4: Final Performance ──────────────────────────────────────────
 
 def plot_final_performance(
@@ -750,7 +775,7 @@ def plot_loss_lr_dual(
         if lr_mean is not None:
             ax2 = ax.twinx()
             ax2.plot(np.arange(1, len(lr_mean) + 1), lr_mean,
-                    color=lr_color, linestyle=":", linewidth=2.0, label="LR")
+                    color=lr_color, linestyle=":", linewidth=1.0, label="LR")
             ax2.set_ylabel("Learning Rate", color=lr_color)
             ax2.tick_params(axis="y", labelcolor=lr_color)
             ax2.set_yscale("log")
@@ -775,39 +800,76 @@ def plot_loss_lr_dual(
 
 # ── Analytical Plot B: Heatmap ───────────────────────────────────
 
-# Unica configurazione da mantenere
-_LOWER_IS_BETTER = {"EtT", "AUL", "AUL_norm", "RV", "CV_final", "SI", "test_loss"}
-_HAS_CRITICAL_POINT = {"rho_hat": 1.0, "R2": 0.5}  # metrica → centro naturale
+_LOWER_IS_BETTER = {
+    "E_target", "suboptimality_gap", "AUL_norm", 
+    "CV_final", "SI_asymptotic", "RV", "test_loss"
+}
+_HAS_CRITICAL_POINT = {"R2": 0.5}  # Predisposto se aggiungerai R2
 
-def _get_heatmap_style(metric: str, matrix: np.ndarray) -> dict:
+def _get_heatmap_style(metric: str) -> dict:
     """Returns kwargs for sns.heatmap based on metric semantics."""
-    clean = metric.removesuffix("_mean").removesuffix("_std").removesuffix("_median")
+    if metric in _HAS_CRITICAL_POINT:
+        return {"cmap": "RdBu_r", "center": _HAS_CRITICAL_POINT[metric]}
 
-    if clean in _HAS_CRITICAL_POINT:
-        return {"cmap": "RdBu_r", "center": _HAS_CRITICAL_POINT[clean]}
-
-    if clean in _LOWER_IS_BETTER:
-        return {"cmap": "YlOrRd_r", "center": float(np.nanmedian(matrix))}
-
-    return {"cmap": "RdYlGn", "center": float(np.nanmedian(matrix))}  # default: higher is better
+    # Palette Accademica Single-Tone: Colore più scuro = Risultato Migliore
+    if metric in _LOWER_IS_BETTER:
+        return {"cmap": "Blues_r"}  # Basso = scuro, Alto = chiaro
+    
+    return {"cmap": "Blues"}        # Alto = scuro, Basso = chiaro
 
 def _get_direction_label(metric: str) -> str:
-    clean = metric.removesuffix("_mean").removesuffix("_std").removesuffix("_median")
-    if clean in _LOWER_IS_BETTER:
+    if metric in _LOWER_IS_BETTER:
         return "↓ lower is better"
-    if clean in _HAS_CRITICAL_POINT:
-        return f"critical point = {_HAS_CRITICAL_POINT[clean]}"
+    if metric in _HAS_CRITICAL_POINT:
+        return f"critical point = {_HAS_CRITICAL_POINT[metric]}"
     return "↑ higher is better"
 
-def _robust_colorscale(matrix: np.ndarray, lower: float = 5.0, upper: float = 95.0) -> tuple[float, float]:
-    vmin = float(np.nanpercentile(matrix, lower))
-    vmax = float(np.nanpercentile(matrix, upper))
-    if np.isclose(vmin, vmax):  # tutti i valori uguali → fallback al range reale
-        vmin, vmax = float(np.nanmin(matrix)), float(np.nanmax(matrix))
+def _robust_colorscale(matrix: np.ndarray) -> tuple[float, float]:
+    """
+    Computes a robust visual range for the color map by ignoring extreme outliers.
+    Saturates colors at the Q1 - 1.5 * IQR and Q3 + 1.5 * IQR boundaries, while
+    clamping to the real data min/max to ensure a clean visual scale.
+    """
+    # 1. Handle all-NaN matrices to prevent errors
+    if np.isnan(matrix).all():
+        return 0.0, 1.0
+
+    # 2. Compute Q1, Q3, and the Interquartile Range (IQR)
+    q1 = np.nanpercentile(matrix, 25)
+    q3 = np.nanpercentile(matrix, 75)
+    iqr = q3 - q1
+
+    # 3. Handle matrices with zero variation (e.g., all values same)
+    if iqr == 0:
+        # Fallback to full range if there is no core variation
+        return float(np.nanmin(matrix)), float(np.nanmax(matrix))
+
+    # 4. Set robust bounds based on the Q1 - 1.5 * IQR and Q3 + 1.5 * IQR rules
+    # This defines the theoretical "neighborhood" of non-outlier data.
+    # We will use this to set the color gradient.
+    # The user-identified "extreme outlier" 5.1... is > Q3 + 1.5 * IQR,
+    # so it will be clipped to the maximum color.
+    vmin_robust = q1 - 1.5 * iqr
+    vmax_robust = q3 + 1.5 * iqr
+
+    # 5. Clamp to real data bounds to prevent visual clutter
+    # If all values are positive (0.05... 5.1), vmin_robust shouldn't
+    # go below the real min to -0.08. We clamp to nanmin. Same for max.
+    real_min = np.nanmin(matrix)
+    real_max = np.nanmax(matrix)
+    vmin = float(max(vmin_robust, real_min))
+    vmax = float(min(vmax_robust, real_max))
+
+    # 6. Re-check to avoid close bounds which can crash Seaborn
+    if np.isclose(vmin, vmax):
+        vmin, vmax = float(real_min), float(real_max)
+
     return vmin, vmax
 
-
 def _outlier_mask_iqr(matrix: np.ndarray, k: float = 1.5) -> np.ndarray:
+    if np.isnan(matrix).all():
+        return np.zeros_like(matrix, dtype=bool)
+        
     q1 = np.nanpercentile(matrix, 25)
     q3 = np.nanpercentile(matrix, 75)
     iqr = q3 - q1
@@ -815,78 +877,74 @@ def _outlier_mask_iqr(matrix: np.ndarray, k: float = 1.5) -> np.ndarray:
         return np.zeros_like(matrix, dtype=bool)
     return (matrix < q1 - k * iqr) | (matrix > q3 + k * iqr)
 
+
 def plot_scheduler_optimizer_heatmap(
-    aggregated: dict,
+    df: pd.DataFrame,
     problem_type: str,
-    metrics: list[str] = ["EtT_mean", "AUL_norm_mean", "rho_hat_mean"],
+    metrics: list[str] = ["E_target", "AUL_norm", "CV_final"],
     save_path: str | Path | None = None,
     show: bool = False,
 ) -> list[str]:
     """
-    Analytical B: Heatmap of configurable metrics.
+    Analytical B: Heatmap of configurable metrics directly from DataFrame.
 
     Rows = schedulers, Columns = optimizers.
-    Cell value = median over 5 seeds of specified metric.
-
-    Default metrics (3 most important for project scope):
-    1. EtT_mean - convergence speed
-    2. AUL_norm_mean - area under loss
-    3. rho_hat_mean - empirical convergence rate
     """
-    
     saved_files = []
 
-    # Build matrix for each metric
     for metric in metrics:
+        if metric not in df.columns:
+            print(f"Warning: Metric '{metric}' not found in DataFrame. Skipping.")
+            continue
+
         fig, ax = plt.subplots(1, 1, figsize=(8, 6))
 
-        # Build matrix: rows=schedulers, cols=optimizers
-        matrix = np.zeros((len(SCHEDULERS_LIST), len(OPTIMIZERS_LIST)))
-        for i, sched in enumerate(SCHEDULERS_LIST):
-            for j, opt in enumerate(OPTIMIZERS_LIST):
-                key = f"{opt}_{sched}"
-                data = aggregated.get(key, {})
-                matrix[i, j] = data.get(metric, np.nan)
+        # 1. Creazione elegante della matrice 2D tramite pivot table
+        pivot_df = df.pivot(index="scheduler", columns="optimizer", values=metric)
+        matrix = pivot_df.to_numpy()
+        y_labels = pivot_df.index.tolist()
+        x_labels = pivot_df.columns.tolist()
 
-        style     = _get_heatmap_style(metric, matrix)
+        # 2. Configurazione stile e scale
+        style = _get_heatmap_style(metric)
         direction = _get_direction_label(metric)
         vmin, vmax = _robust_colorscale(matrix)
         outlier_mask = _outlier_mask_iqr(matrix)
 
-        annot_matrix = np.where(
-            outlier_mask,
-            np.vectorize(lambda v: f"{v:.4f}*")(matrix),
-            np.vectorize(lambda v: f"{v:.4f}")(matrix)
-        )
+        # 3. Costruzione della matrice di annotazione testuale (gestisce NaN format)
+        def format_cell(val: float, is_outlier: bool) -> str:
+            if np.isnan(val):
+                return ""
+            # Usa 0 decimali se il numero è intero (es. E_target), 4 se è un float (es. CV_final)
+            num_str = f"{val:.0f}" if float(val).is_integer() else f"{val:.4f}"
+            return f"{num_str}*" if is_outlier else num_str
 
-        # Create heatmap
-        sns.heatmap(matrix, vmin=vmin, vmax=vmax, annot=annot_matrix, fmt="",
-                    xticklabels=OPTIMIZERS_LIST, yticklabels=SCHEDULERS_LIST,
-                    ax=ax, **style)
-        
+        annot_matrix = np.vectorize(format_cell)(matrix, outlier_mask)
+
+        # 4. Rendering Heatmap
+        sns.heatmap(
+            matrix, vmin=vmin, vmax=vmax, annot=annot_matrix, fmt="",
+            xticklabels=x_labels, yticklabels=y_labels,
+            ax=ax, **style
+        )
         
         ax.set_title(f"{problem_type.upper()} — {metric}  ({direction})")
         ax.set_xlabel("Optimizer")
         ax.set_ylabel("Scheduler")
 
-        # Add title and subtitle
-        # add_figure_title(
-        #     fig,
-        #     title=f"{problem_type.upper()} - {metric.removesuffix('_mean').replace('_', ' ').title()}",
-        #     subtitle=f"Rows: Schedulers | Columns: Optimizers",
-        # )
-        
+        # 5. Salvataggio
         if save_path:
-            metric_suffix = metric.replace("_mean", "").lower()
-            heatmap_path = str(save_path).replace(".png", f"_{metric_suffix}.png")
-            _save(fig, heatmap_path)
+            heatmap_path = str(save_path).replace(".png", f"_{metric.lower()}.png")
+            # Sostituisci con la tua funzione _save(fig, heatmap_path) se necessario
+            plt.savefig(heatmap_path, bbox_inches="tight", dpi=300)
             saved_files.append(heatmap_path)
+            
         if show:
             plt.show()
+            
         plt.close(fig)
 
     return saved_files
-
 
 # ── Entry Point: plot_all ────────────────────────────────────────
 
@@ -973,16 +1031,7 @@ def plot_all(
         show=show
     )
     saved_files.append(str(save_dir / f"{problem_type}_analytical_a_loss_lr_dual.png"))
-    
-    # Analytical B: Heatmap (returns list of saved files)
-    heatmap_files = plot_scheduler_optimizer_heatmap(
-        aggregated, problem_type,
-        metrics=["EtT_mean", "EtT_median", "AUL_norm_mean", "rho_hat_mean", "CV_final_mean", "SI_mean", "test_accuracy_mean", "test_loss_mean"],
-        save_path=save_dir / f"{problem_type}_analytical_b_heatmap.png",
-        show=show
-    )
-    
-    saved_files.append(heatmap_files)
+
     
     logger.info(f"All plots saved for: {problem_type}")
     return saved_files
