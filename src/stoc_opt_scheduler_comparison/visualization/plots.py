@@ -170,20 +170,31 @@ def plot_global_comparison(
     results: dict,
     aggregated: dict,
     problem_type: str,
+    L_star: float | None = None,
+    L0: float | None = None,
+    e_target_levels: dict[str, float] | None = None,
     save_path: str | Path | None = None,
     show: bool = False,
 ) -> Figure:
     """
-    Level 1: (2, 1) subplots — loss curve overview + LR schedules.
+    Level 1: (3, 1) subplots — loss curve overview + LR schedules.
 
-    Top subplot:    train_loss mean per config (10 curves: 5 schedulers × 2 optimizers).
-    Bottom subplot: learning_rate mean per config (same visual encoding, no std band).
-                    Y-axis in log scale to highlight schedule shape differences.
+    Top subplot:    train_loss mean per config (linear scale).
+    Middle subplot: train_loss mean per config (log scale) + L_target threshold lines.
+    Bottom subplot: learning_rate mean per config (log scale, no std band).
     """
     _setup_style()
-    fig, axes = plt.subplots(2, 1, figsize=(14, 10))  # stacked vertically
+    
+    # Aumentata l'altezza (da 14 a 18) per ospitare comodamente 3 subplot impilati
+    fig, axes = plt.subplots(3, 1, figsize=(12, 18), dpi=150)
 
-    # Collect all unique (scheduler, optimizer) configs from run names
+    # Pre-calcolo dei valori di soglia E_target se i parametri sono forniti
+    e_target_values: list[float] = []
+    if L_star is not None and L0 is not None and e_target_levels is not None:
+        for eps in e_target_levels.values():
+            e_target_values.append(compute_target_loss(L_star, eps, problem_type, L0))
+
+    # Raccolta delle configurazioni univoche (scheduler, optimizer) dai nomi delle run
     configs = []
     for run_name in results:
         parsed = _parse_run_name(run_name)
@@ -193,8 +204,8 @@ def plot_global_comparison(
         if (sched, opt) not in configs:
             configs.append((sched, opt))
 
-    # Top: train_loss mean curves
-    ax = axes[0]
+    # ── Subplot 1 (Top): train_loss mean curves (Linear Scale) ──
+    ax0 = axes[0]
     for sched, opt in configs:
         key = f"{opt}_{sched}"
         mean_arr, std_arr = _get_aggregated_arrays(aggregated, key)
@@ -204,17 +215,55 @@ def plot_global_comparison(
         style = _get_optimizer_style(opt)
         epochs = np.arange(1, len(mean_arr) + 1)
 
-        ax.plot(epochs, mean_arr, color=color, label=f"{sched} ({opt})",
+        ax0.plot(epochs, mean_arr, color=color, label=f"{sched} ({opt})",
                 linestyle=style["linestyle"], linewidth=style["linewidth"])
 
-    ax.set_xlabel("Epoch")
-    ax.set_ylabel("Training Loss")
-    ax.set_title(f"{problem_type.upper()} - Loss Curves")
-    ax.legend(loc="upper right")
-    ax.grid(True, alpha=0.3)
+    ax0.set_xlabel("Epoch")
+    ax0.set_ylabel("Training Loss")
+    ax0.set_title(f"{problem_type.upper()} - Loss Curves (Linear Scale)")
+    ax0.legend(loc="upper right")
+    ax0.grid(True, alpha=0.3)
 
-    # Bottom: learning_rate mean curves (log scale, no std band)
-    ax = axes[1]
+    # ── Subplot 2 (Middle): train_loss mean curves (Log Scale) + E_target lines ──
+    ax1 = axes[1]
+    for sched, opt in configs:
+        key = f"{opt}_{sched}"
+        mean_arr, std_arr = _get_aggregated_arrays(aggregated, key)
+        if mean_arr is None:
+            continue
+        color = _get_scheduler_color(sched)
+        style = _get_optimizer_style(opt)
+        epochs = np.arange(1, len(mean_arr) + 1)
+
+        ax1.plot(epochs, mean_arr, color=color, label=f"{sched} ({opt})",
+                linestyle=style["linestyle"], linewidth=style["linewidth"])
+
+    # Disegna le linee di soglia E_target
+    for i, L_target in enumerate(e_target_values):
+        # Utilizza le label globali se presenti, altrimenti fallback pulito
+        # try:
+        #     label_name = f"E_target {E_TARGET_LABELS[i]}"
+        # except NameError:
+        #     label_name = f"E_target {i+1}"
+            
+        ax1.axhline(
+            y=L_target, color=E_TARGET_COLORS[i],
+            linestyle=E_TARGET_LINESTYLES[i], linewidth=1, alpha=0.75,
+            # label=label_name
+        )
+
+    ax1.set_xlabel("Epoch")
+    ax1.set_ylabel("Training Loss (Log Scale)")
+    ax1.set_title(f"{problem_type.upper()} - Loss Curves (Log Scale)")
+    ax1.set_yscale("log")
+    
+    # Aggiungi la legenda solo se ci sono linee target per non duplicare le curve dei modelli
+    if e_target_values:
+        ax1.legend(loc="upper right")
+    ax1.grid(True, alpha=0.3)
+
+    # ── Subplot 3 (Bottom): learning_rate mean curves (log scale, no std band) ──
+    ax2 = axes[2]
     for sched, opt in configs:
         key = f"{opt}_{sched}"
         data = aggregated.get(key, {})
@@ -225,21 +274,31 @@ def plot_global_comparison(
         style = _get_optimizer_style(opt)
         epochs = np.arange(1, len(lr_mean) + 1)
 
-        ax.plot(epochs, lr_mean, color=color,
+        ax2.plot(epochs, lr_mean, color=color,
                 linestyle=style["linestyle"], linewidth=style["linewidth"],
                 label=f"{sched} ({opt})")
 
-    ax.set_xlabel("Epoch")
-    ax.set_ylabel("Learning Rate")
-    ax.set_title(f"{problem_type.upper()} - LR Schedules")
-    ax.set_yscale("log")
-    ax.legend(loc="lower left")
-    ax.grid(True, alpha=0.3)
+    ax2.set_xlabel("Epoch")
+    ax2.set_ylabel("Learning Rate")
+    ax2.set_title(f"{problem_type.upper()} - LR Schedules")
+    ax2.set_yscale("log")
+    ax2.legend(loc="lower left")
+    ax2.grid(True, alpha=0.3)
+
+    # ── Layout and Title ──
+    # Costruzione dinamica del sottotitolo se sono presenti E_targets
+    e_target_subtitle = ""
+    if e_target_values:
+        level_names = list(e_target_levels.keys()) if e_target_levels else []
+        vals_str = ", ".join(f"{n}={v:.6f}" for n, v in zip(level_names, e_target_values))
+        e_target_subtitle = f"\nE_target thresholds: {vals_str}"
+
+    fig.tight_layout(rect=(0, 0.03, 1, 0.95))
 
     add_figure_title(
         fig,
         title=f"{problem_type.upper()} - Global Comparison",
-        subtitle="Top: Training Loss curves | Bottom: Learning Rate schedules (log scale)",
+        subtitle=f"Top: Loss (Linear) | Middle: Loss (Log) | Bottom: LR Schedules (Log){e_target_subtitle}",
     )
 
     if save_path:
@@ -247,7 +306,6 @@ def plot_global_comparison(
     if show:
         plt.show()
     return fig
-
 
 # ── Level 2: By Optimizer ────────────────────────────────────────────────
 
@@ -272,7 +330,7 @@ def plot_by_optimizer(
     are drawn at the computed L_target values for each tolerance level.
     """
     _setup_style()
-    fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+    fig, axes = plt.subplots(2, 2, figsize=(16, 12), dpi=150)
     axes = axes.flatten()
 
     # Pre-compute E_target threshold values if parameters provided
@@ -385,7 +443,7 @@ def plot_seed_variance(
     """
     _setup_style()
 
-    fig, axes = plt.subplots(5, 2, figsize=(12, 20), sharex=True, sharey=False)
+    fig, axes = plt.subplots(5, 2, figsize=(12, 20), sharex=True, sharey=False, dpi=150)
     axes = axes.flatten() if hasattr(axes, "flatten") else axes.ravel()
 
     # Pre-compute global E_target threshold values
@@ -477,7 +535,7 @@ def plot_convergence_boxplot(
     I Timeout sono tracciati manualmente con offset precisi per mantenere 
     il layout intatto anche quando intere categorie falliscono.
     """
-    fig, ax = plt.subplots(1, 1, figsize=(14, 7))
+    fig, ax = plt.subplots(1, 1, figsize=(14, 7), dpi=150)
     opt_palette = {"ADAM": "#2b83ba", "SGD": "#d7191c"}
 
     # 1. Definizione Categorie (Garantisce ordine asse X)
@@ -609,120 +667,155 @@ def plot_final_performance(
 ) -> Figure:
     """
     Level 4: 2 subplots (stacked) - train vs test comparison.
-
-    Subplot 1: last train loss, min train loss, test loss (bar + error bars) per config
-    Subplot 2: last train acc, max train acc, test acc (bar + error bars) per config
+    Codice ottimizzato con Dot Plot (Point Plot) e error bars.
+    L'asse Y si adatta dinamicamente alla varianza senza distorcere i dati.
     """
-    _setup_style()
+    # _setup_style() # Decommenta la tua funzione di stile
 
     configs = [
         f"{opt}_{sched}"
-        for opt in OPTIMIZERS_LIST
-        for sched in SCHEDULERS_LIST
+        for opt in ["sgd", "adam"]  # Assicurati di usare OPTIMIZERS_LIST
+        for sched in ["none", "exponential", "cosine", "cyclic", "one-cycle"] # SCHEDULERS_LIST
         if f"{opt}_{sched}" in aggregated
-]
+    ]
+    
     if not configs:
         logger.warning("No data for final performance plot")
         return plt.gcf()
 
-    # ── Loss data ──
-    last_train_loss_mean, last_train_loss_std = [], []
-    min_train_loss_mean,  min_train_loss_std  = [], []
-    test_loss_mean,       test_loss_std       = [], []
-
-    # ── Accuracy data ──
-    last_train_acc_mean, last_train_acc_std = [], []
-    max_train_acc_mean,  max_train_acc_std  = [], []
-    test_acc_mean,       test_acc_std       = [], []
+    # 1. Estrazione dati vettorializzata
+    metrics = {
+        "loss": {"last": [], "min_max": [], "test": [], "last_std": [], "min_max_std": [], "test_std": []},
+        "acc":  {"last": [], "min_max": [], "test": [], "last_std": [], "min_max_std": [], "test_std": []}
+    }
 
     for c in configs:
         agg = aggregated[c]
+        
+        tl = agg.get("train_losses_mean", np.array([0.0]))
+        tl_std = agg.get("train_losses_std", np.array([0.0]))
+        ta = agg.get("train_accuracies_mean", np.array([0.0]))
+        ta_std = agg.get("train_accuracies_std", np.array([0.0]))
 
-        # train_losses_mean is array of shape (epochs,)
-        tl = agg.get("train_losses_mean")
-        tl_std = agg.get("train_losses_std")
-        last_train_loss_mean.append(float(tl[-1])         if tl is not None else 0.0)
-        last_train_loss_std.append(float(tl_std[-1])      if tl_std is not None else 0.0)
-        min_train_loss_mean.append(float(tl.min())        if tl is not None else 0.0)
-        min_idx = int(np.argmin(tl))                      if tl is not None else 0
-        min_train_loss_std.append(float(tl_std[min_idx])  if tl_std is not None else 0.0)
+        # Popolamento Loss
+        metrics["loss"]["last"].append(tl[-1])
+        metrics["loss"]["last_std"].append(tl_std[-1])
+        min_idx = int(np.argmin(tl))
+        metrics["loss"]["min_max"].append(tl[min_idx])
+        metrics["loss"]["min_max_std"].append(tl_std[min_idx])
+        metrics["loss"]["test"].append(agg.get("test_loss_mean", 0.0))
+        metrics["loss"]["test_std"].append(agg.get("test_loss_std", 0.0))
 
-        test_loss_mean.append(agg.get("test_loss_mean", 0.0))
-        test_loss_std.append(agg.get("test_loss_std",   0.0))
+        # Popolamento Accuracy
+        metrics["acc"]["last"].append(ta[-1])
+        metrics["acc"]["last_std"].append(ta_std[-1])
+        max_idx = int(np.argmax(ta))
+        metrics["acc"]["min_max"].append(ta[max_idx])
+        metrics["acc"]["min_max_std"].append(ta_std[max_idx])
+        metrics["acc"]["test"].append(agg.get("test_accuracy_mean", 0.0))
+        metrics["acc"]["test_std"].append(agg.get("test_accuracy_std", 0.0))
 
-        ta = agg.get("train_accuracies_mean")
-        ta_std = agg.get("train_accuracies_std")
-        last_train_acc_mean.append(float(ta[-1])          if ta is not None else 0.0)
-        last_train_acc_std.append(float(ta_std[-1])       if ta_std is not None else 0.0)
-        max_train_acc_mean.append(float(ta.max())         if ta is not None else 0.0)
-        max_idx = int(np.argmax(ta))                      if ta is not None else 0
-        max_train_acc_std.append(float(ta_std[max_idx])   if ta_std is not None else 0.0)
+    for category in metrics:
+        for key in metrics[category]:
+            metrics[category][key] = np.array(metrics[category][key]) # type: ignore
 
-        test_acc_mean.append(agg.get("test_accuracy_mean", 0.0))
-        test_acc_std.append(agg.get("test_accuracy_std",   0.0))
-
-    fig, axes = plt.subplots(2, 1, figsize=(16, 14))
-
+    # Altezza leggermente ridotta rispetto al figsize enorme dell'inset
+    fig, axes = plt.subplots(2, 1, figsize=(16, 12), dpi=150) 
+    
     x = np.arange(len(configs))
-    width = 0.25
-    err_kw = dict(capsize=5, capthick=1.5, elinewidth=1.5)
+    # Ridotto l'offset per raggruppare i 3 punti più stretti attorno all'etichetta
+    offset_w = 0.15 
+    
+    # Stile globale degli error bar
+    err_kw = dict(capsize=4, capthick=1.5, elinewidth=1, ls='none')
 
-    # ── Subplot 1: Loss ──
-    ax = axes[0]
-    b1 = ax.bar(x - width, last_train_loss_mean, width, label="Train Loss (last)",
-                color="#4C72B0", alpha=0.85)
-    ax.errorbar(x - width, last_train_loss_mean, yerr=last_train_loss_std,
-                fmt="none", color="#1a3a6b", **err_kw)
+    plot_structure = [
+        {
+            "ax_idx": 0, "title": "Train vs Test Loss", "ylabel": "Loss",
+            "data": metrics["loss"], "labels": ["Train Loss (last)", "Train Loss (min)", "Test Loss"]
+        },
+        {
+            "ax_idx": 1, "title": "Train vs Test Accuracy", "ylabel": "Accuracy",
+            "data": metrics["acc"], "labels": ["Train Accuracy (last)", "Train Accuracy (max)", "Test Accuracy"]
+        }
+    ]
 
-    b2 = ax.bar(x,         min_train_loss_mean,  width, label="Train Loss (min)",
-                color="#55A868", alpha=0.85)
-    ax.errorbar(x,         min_train_loss_mean,  yerr=min_train_loss_std,
-                fmt="none", color="#1f5c30", **err_kw)
+    # Stile per i punti: usiamo marker diversi per differenziare a colpo d'occhio
+    # Cerchio per Last, Triangolo su per Min/Max, Quadrato per Test
+    styles = [
+        {"color": "#4C72B0", "err_color": "#1a3a6b", "marker": "o", "offset": -offset_w}, # Last (Blu)
+        {"color": "#55A868", "err_color": "#1f5c30", "marker": "^", "offset": 0},         # Min/Max (Verde)
+        {"color": "#C44E52", "err_color": "#7a1a1d", "marker": "s", "offset": offset_w}   # Test (Rosso)
+    ]
 
-    b3 = ax.bar(x + width, test_loss_mean,        width, label="Test Loss",
-                color="#C44E52", alpha=0.85)
-    ax.errorbar(x + width, test_loss_mean,         yerr=test_loss_std,
-                fmt="none", color="#7a1a1d", **err_kw)
+    for struct in plot_structure:
+        ax = axes[struct["ax_idx"]]
+        d = struct["data"]
+        categories = ["last", "min_max", "test"]
+        
+        # Plot dei Dot con Error Bars
+        for i, cat in enumerate(categories):
+            means = d[cat]
+            stds = d[f"{cat}_std"]
+            s = styles[i]
+            
+            # Disegniamo punto e barra usando 'ecolor' per assegnare il colore alla barra di errore
+            ax.errorbar(
+                x + s["offset"], means, yerr=stds, 
+                fmt=s["marker"], color=s["color"], ecolor=s["err_color"], label=struct["labels"][i], 
+                markersize=9, alpha=0.9, **err_kw
+            )
 
-    ax.set_ylabel("Loss")
-    ax.set_title(f"{problem_type.upper()} - Train vs Test Loss")
-    ax.set_xticks(x)
-    ax.set_xticklabels(configs, rotation=45, ha="right")
-    ax.legend(loc="upper right")
-    ax.grid(True, alpha=0.3, axis="y")
+        # 2. CALCOLO DINAMICO ASSE Y (Ora perfettamente legittimo per il Dot Plot)
+        all_mins = np.concatenate([d[cat] - d[f"{cat}_std"] for cat in categories])
+        all_maxs = np.concatenate([d[cat] + d[f"{cat}_std"] for cat in categories])
+        
+        global_min = np.nanmin(all_mins)
+        global_max = np.nanmax(all_maxs)
+        value_span = global_max - global_min
+        
+        # Margine del 5% per non toccare i bordi superiore e inferiore
+        margin = max(value_span * 0.05, 0.01) # Minimo 1% di margine se la varianza è zero
+        
+        if struct["ylabel"] == "Accuracy":
+            # Per l'accuratezza tagliamo liberamente sotto, con tetto rigido a 1.01
+            y_bottom = max(0.0, global_min - margin)
+            y_top = min(1.01, global_max + margin) # Permettiamo di sforare leggermente 1.0 se l'errore lo tocca
+            ax.set_ylim(y_bottom, y_top)
+            
+            # Evidenziamo visivamente la linea del 100%
+            ax.axhline(1.0, color='gray', linestyle='--', alpha=0.3, zorder=0)
+        else:
+            # Per la loss, il minimo matematico è 0.0
+            y_bottom = max(0.0, global_min - margin)
+            ax.set_ylim(y_bottom, global_max + margin)
+            
+            # Linea dello zero per riferimento visivo
+            ax.axhline(0.0, color='gray', linestyle='--', alpha=0.3, zorder=0)
 
-    # ── Subplot 2: Accuracy ──
-    ax = axes[1]
-    ax.bar(x - width, last_train_acc_mean, width, label="Train Acc (last)",
-           color="#4C72B0", alpha=0.85)
-    ax.errorbar(x - width, last_train_acc_mean, yerr=last_train_acc_std,
-                fmt="none", color="#1a3a6b", **err_kw)
-
-    ax.bar(x,         max_train_acc_mean,  width, label="Train Acc (max)",
-           color="#55A868", alpha=0.85)
-    ax.errorbar(x,         max_train_acc_mean,  yerr=max_train_acc_std,
-                fmt="none", color="#1f5c30", **err_kw)
-
-    ax.bar(x + width, test_acc_mean,        width, label="Test Acc",
-           color="#C44E52", alpha=0.85)
-    ax.errorbar(x + width, test_acc_mean,         yerr=test_acc_std,
-                fmt="none", color="#7a1a1d", **err_kw)
-
-    ax.set_ylabel("Accuracy")
-    ax.set_title(f"{problem_type.upper()} - Train vs Test Accuracy")
-    ax.set_xticks(x)
-    ax.set_xticklabels(configs, rotation=45, ha="right")
-    ax.legend(loc="lower right")
-    ax.grid(True, alpha=0.3, axis="y")
+        # Pulizia e formattazione dell'asse X
+        ax.set_ylabel(struct["ylabel"])
+        ax.set_title(f"{problem_type.upper()} - {struct['title']}")
+        ax.set_xticks(x)
+        ax.set_xticklabels(configs, rotation=45, ha="right")
+        
+        # Aggiungiamo gridlines verticali leggere per separare visivamente le configurazioni
+        for tick in x[:-1]:
+            ax.axvline(tick + 0.5, color='gray', alpha=0.15, linestyle='-')
+            
+        ax.legend(loc="best", frameon=True, edgecolor='white')
+        ax.grid(True, alpha=0.3, axis="y")
 
     add_figure_title(
-        fig,
-        title=f"{problem_type.upper()} - Final Performance Comparison",
-        subtitle="Loss (top): last/min train + test | Accuracy (bottom): last/max train + test | Error bars = ±std across seeds"
+       fig,
+       title=f"{problem_type.upper()} - Final Performance Comparison",
+       subtitle="Loss (top): last/min train + test | Accuracy (bottom): last/max train + test | Error bars = ±std across seeds"
     )
-
+    # Aggiungi il layout dinamico
+    fig.tight_layout(rect=(0.0, 0.03, 1.0, 0.95))
+    
     if save_path:
-        _save(fig, save_path)
+        plt.savefig(save_path, bbox_inches='tight', dpi=150)
     if show:
         plt.show()
     return fig
@@ -746,7 +839,7 @@ def plot_loss_lr_dual(
     """
     _setup_style()
 
-    fig, axes = plt.subplots(5, 2, figsize=(12, 20), sharex=True)
+    fig, axes = plt.subplots(5, 2, figsize=(12, 20), sharex=True, dpi=150)
     axes = axes.flatten() if hasattr(axes, "flatten") else axes.ravel()
 
     for idx, (opt, sched) in enumerate([(o, s) for s in SCHEDULERS_LIST for o in OPTIMIZERS_LIST]):
@@ -815,7 +908,7 @@ def _get_heatmap_style(metric: str) -> dict:
     if metric in _LOWER_IS_BETTER:
         return {"cmap": "Blues_r"}  # Basso = scuro, Alto = chiaro
     
-    return {"cmap": "Blues"}        # Alto = scuro, Basso = chiaro
+    return {"cmap": "Greens"}        # Alto = scuro, Basso = chiaro
 
 def _get_direction_label(metric: str) -> str:
     if metric in _LOWER_IS_BETTER:
@@ -989,6 +1082,9 @@ def plot_all(
     # Level 1: Global Comparison
     plot_global_comparison(
         results_by_problem, aggregated, problem_type,
+        L_star=L_star_global,
+        L0=L0,
+        e_target_levels=e_target_levels,
         save_path=save_dir / f"{problem_type}_level1_global_comparison.png",
         show=show
     )

@@ -16,7 +16,7 @@ from stoc_opt_scheduler_comparison.data_load.loaders import load_breast_cancer_w
 from stoc_opt_scheduler_comparison.models.architectures import create_model
 from stoc_opt_scheduler_comparison.training.engine import train_one_epoch, evaluate
 from stoc_opt_scheduler_comparison.training.optimizers import get_optimizer
-from stoc_opt_scheduler_comparison.training.schedulers import get_scheduler
+from stoc_opt_scheduler_comparison.training.schedulers import get_dynamic_scheduler_params, get_scheduler
 from stoc_opt_scheduler_comparison.evaluation.metrics import TrainingHistory
 
 
@@ -86,6 +86,7 @@ def compute_empirical_L_star(
     lr_config: dict | float,
     device: torch.device,
     extended_epochs: int = 200,
+    use_lr_decay: bool = True,     
     lr_decay_factor: float = 0.5,
     lr_decay_interval: int = 10,
     seed: int = 42,
@@ -95,7 +96,7 @@ def compute_empirical_L_star(
 
     Protocol:
     1. Find best (optimizer, scheduler) config from initial runs.
-    2. Run extended training for `extended_epochs` with LR decay in the second half.
+    2. Run extended training for `extended_epochs` with optional LR decay in the second half.
     3. Return the minimum training loss achieved.
 
     Args:
@@ -105,6 +106,7 @@ def compute_empirical_L_star(
         lr_config: LR value(s) from config (dict or float).
         device: torch device.
         extended_epochs: Total epochs for extended run.
+        use_lr_decay: If True, applies an aggressive manual LR decay in the second half.
         lr_decay_factor: Factor to multiply LR at each decay step.
         lr_decay_interval: Decay every N epochs during the decay phase.
         seed: Random seed for data loading.
@@ -135,17 +137,18 @@ def compute_empirical_L_star(
     optimizer = get_optimizer(model, name=best_opt, lr=lr)
 
     sched_params = dict(scheduler_params.get(best_sched, {}))
-    if best_sched == "exponential":
-        target_drop = 100.0
-        sched_params["gamma"] = (1.0 / target_drop) ** (1.0 / extended_epochs)
-    if best_sched == "cosine":
-        sched_params["T_max"] = extended_epochs
-    if best_sched == "one-cycle":
-        sched_params["epochs"] = extended_epochs
-        sched_params["steps_per_epoch"] = len(dataloaders["train"])
-    if best_sched == "cyclic":
-        sched_params["base_lr"] = lr
-        sched_params["step_size_up"] = 2 * len(dataloaders["train"])
+    
+    # Ottieni la lunghezza del dataloader (steps per epoch)
+    steps = len(dataloaders["train"])
+
+    # Richiami la funzione
+    sched_params = get_dynamic_scheduler_params(
+        scheduler_name=best_sched,
+        lr=lr,
+        epochs=extended_epochs,
+        steps_per_epoch=steps,
+        base_sched_params=sched_params
+    )
 
     scheduler = get_scheduler(optimizer, name=best_sched, **sched_params)
 
@@ -161,10 +164,11 @@ def compute_empirical_L_star(
             optimizer, scheduler, best_sched, device,
         )
 
-        # Enforce aggressive LR decay in the second half
-        if epoch >= decay_epoch and (epoch - decay_epoch) % lr_decay_interval == 0:
+        # ─── LOGICA DI DECAY CONDIZIONALE ──────────────────────────────────────
+        if use_lr_decay and epoch >= decay_epoch and (epoch - decay_epoch) % lr_decay_interval == 0:
             for param_group in optimizer.param_groups:
                 param_group["lr"] *= lr_decay_factor
+        # ───────────────────────────────────────────────────────────────────────
 
         lr_val = float(optimizer.param_groups[0]["lr"])
         history.add_epoch(train_loss=train_loss, train_accuracy=train_acc, lr=lr_val)
