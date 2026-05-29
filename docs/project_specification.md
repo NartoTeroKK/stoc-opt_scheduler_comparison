@@ -60,8 +60,6 @@ Per analizzare la stabilità delle curve di loss, devi considerare la **varianza
 *   Un fattore che modulerà fortemente la stabilità, insieme allo scheduler, è l'utilizzo dei **mini-batch**. L'impiego di un batch di dimensione $B$ riduce la varianza del gradiente approssimativamente di un fattore $1/B$. 
 *   Di conseguenza, quando analizzerai la curva della loss nel tempo, ricordati che una traiettoria fluida non dipenderà solo da quanto lo scheduler abbassa $\eta$, ma anche dall'uso di mini-batch che "puliscono" intrinsecamente il segnale di discesa.
 
-*(Nota per la ricerca indipendente: Per le formule esatte matematiche e le implementazioni di One-Cycle policy, Cosine Annealing e Cyclical Learning Rate, dovrai fare riferimento a letteratura esterna ai documenti finora analizzati).*
-
 
 ### Report Finale e Presentazione
 
@@ -71,7 +69,6 @@ Il report scritto deve includere:
 
 - Descrizione teorica di ogni scheduler con formule, intuizione geometrica e pseudocodice
 - Sezione metodologica: setup sperimentale, dataset, architetture, metriche
-- Risultati V1→V4 con figure e tabelle
 - Discussione: interazione tra scheduler e optimizer (es. Adam + One-Cycle è ridondante?)
 - Conclusioni: raccomandazioni pratiche su quale strategia usare e quando
 

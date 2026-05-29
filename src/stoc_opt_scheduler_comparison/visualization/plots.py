@@ -285,20 +285,26 @@ def plot_global_comparison(
     ax2.legend(loc="lower left")
     ax2.grid(True, alpha=0.3)
 
-    # ── Layout and Title ──
-    # Costruzione dinamica del sottotitolo se sono presenti E_targets
-    e_target_subtitle = ""
-    if e_target_values:
-        level_names = list(e_target_levels.keys()) if e_target_levels else []
-        vals_str = ", ".join(f"{n}={v:.6f}" for n, v in zip(level_names, e_target_values))
-        e_target_subtitle = f"\nE_target thresholds: {vals_str}"
+    # ── Enforce strict x-axis from 0 to max epochs ──
+    max_epochs = 0
+    for sched, opt in configs:
+        key = f"{opt}_{sched}"
+        mean_arr, _ = _get_aggregated_arrays(aggregated, key)
+        if mean_arr is not None:
+            max_epochs = max(max_epochs, len(mean_arr))
+        lr_mean = aggregated.get(key, {}).get("learning_rates_mean")
+        if lr_mean is not None:
+            max_epochs = max(max_epochs, len(lr_mean))
+    for ax in axes:
+        ax.set_xlim(0, max_epochs)
 
+    # ── Layout and Title ──
     fig.tight_layout(rect=(0, 0.03, 1, 0.95))
 
     add_figure_title(
         fig,
         title=f"{problem_type.upper()} - Global Comparison",
-        subtitle=f"Top: Loss (Linear) | Middle: Loss (Log) | Bottom: LR Schedules (Log){e_target_subtitle}",
+        subtitle=f"Top: Loss (Linear) | Middle: Loss (Log) | Bottom: LR Schedules (Log)",
     )
 
     if save_path:
@@ -400,17 +406,21 @@ def plot_by_optimizer(
         ax_log.set_yscale("log")
         ax_log.grid(True, alpha=0.3)
 
-    # Build subtitle with E_target info
-    e_target_subtitle = ""
-    if e_target_values:
-        level_names = list(e_target_levels.keys()) if e_target_levels else []
-        vals_str = ", ".join(f"{n}={v:.6f}" for n, v in zip(level_names, e_target_values))
-        e_target_subtitle = f" | E_target thresholds: {vals_str}"
+    # ── Enforce strict x-axis from 0 to max epochs ──
+    max_epochs = 0
+    for opt in OPTIMIZERS_LIST:
+        for sched in SCHEDULERS_LIST:
+            key = f"{opt}_{sched}"
+            mean_arr, _ = _get_aggregated_arrays(aggregated, key)
+            if mean_arr is not None:
+                max_epochs = max(max_epochs, len(mean_arr))
+    for ax in axes:
+        ax.set_xlim(0, max_epochs)
 
     add_figure_title(
         fig,
         title=f"{problem_type.upper()} - Loss Curves by Optimizer",
-        subtitle=f"Left: Linear scale | Right: Log scale{e_target_subtitle}"
+        subtitle=f"Left: Linear scale | Right: Log scale | Dashed lines = E_target thresholds",
     )        
 
     if save_path:
@@ -500,12 +510,17 @@ def plot_seed_variance(
     for ax in axes:
         ax.set_ylim(y_min, y_max)
 
+    # ── Enforce strict x-axis from 0 to max epochs ──
+    max_epochs = 0
+    for opt, sched in [(o, s) for s in SCHEDULERS_LIST for o in OPTIMIZERS_LIST]:
+        seed_arrays = _get_seed_arrays(results, sched, opt)
+        if seed_arrays:
+            max_epochs = max(max_epochs, max(len(arr) for arr in seed_arrays))
+    for ax in axes:
+        ax.set_xlim(0, max_epochs)
+
     # Build subtitle with E_target info
     subtitle = "Each subplot: 10 thin seed lines + 1 thick mean line | dashed = per-cell threshold"
-    if e_target_values:
-        level_names = list(e_target_levels.keys()) if e_target_levels else []
-        vals_str = ", ".join(f"{n}={v:.6f}" for n, v in zip(level_names, e_target_values))
-        subtitle += f"\nGlobal E_target: {vals_str}"
 
     add_figure_title(
         fig,
@@ -876,6 +891,19 @@ def plot_loss_lr_dual(
         ax.set_title(f"{opt.upper()} - {sched}")
         ax.set_xlabel("Epoch")
         ax.grid(True, alpha=0.3)
+
+    # ── Enforce strict x-axis from 0 to max epochs ──
+    max_epochs = 0
+    for opt, sched in [(o, s) for s in SCHEDULERS_LIST for o in OPTIMIZERS_LIST]:
+        key = f"{opt}_{sched}"
+        mean_arr, _ = _get_aggregated_arrays(aggregated, key)
+        if mean_arr is not None:
+            max_epochs = max(max_epochs, len(mean_arr))
+        lr_mean = aggregated.get(key, {}).get("learning_rates_mean")
+        if lr_mean is not None:
+            max_epochs = max(max_epochs, len(lr_mean))
+    for ax in axes:
+        ax.set_xlim(0, max_epochs)
 
     # Add overall figure title with subtitle
     add_figure_title(
