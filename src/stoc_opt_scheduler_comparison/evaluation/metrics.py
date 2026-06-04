@@ -25,18 +25,28 @@ class TrainingHistory:
     train_losses: list[float] = field(default_factory=list)
     train_accuracies: list[float] = field(default_factory=list)
     learning_rates: list[float] = field(default_factory=list)
+    grad_norms: list[float] = field(default_factory=list)
     test_metrics: dict = field(default_factory=dict)
 
     # Numpy arrays (populated by to_arrays())
     _train_losses_arr: np.ndarray | None = field(default=None, repr=False)
     _train_accuracies_arr: np.ndarray | None = field(default=None, repr=False)
     _learning_rates_arr: np.ndarray | None = field(default=None, repr=False)
+    _grad_norms_arr: np.ndarray | None = field(default=None, repr=False)
 
-    def add_epoch(self, train_loss: float, train_accuracy: float, lr: float) -> None:
+    def add_epoch(
+        self,
+        train_loss: float,
+        train_accuracy: float,
+        lr: float,
+        grad_norm: float | None = None,
+    ) -> None:
         """Record metrics for one epoch (list append - efficient)."""
         self.train_losses.append(train_loss)
         self.train_accuracies.append(train_accuracy)
         self.learning_rates.append(lr)
+        if grad_norm is not None:
+            self.grad_norms.append(grad_norm)
 
     def set_test_metrics(self, metrics: dict) -> None:
         """Store final test evaluation results."""
@@ -47,6 +57,8 @@ class TrainingHistory:
         self._train_losses_arr = np.array(self.train_losses, dtype=float)
         self._train_accuracies_arr = np.array(self.train_accuracies, dtype=float)
         self._learning_rates_arr = np.array(self.learning_rates, dtype=float)
+        if self.grad_norms:
+            self._grad_norms_arr = np.array(self.grad_norms, dtype=float)
 
     @property
     def train_losses_arr(self) -> np.ndarray:
@@ -68,7 +80,15 @@ class TrainingHistory:
             self.to_arrays()
         assert self._learning_rates_arr is not None
         return self._learning_rates_arr
-    
+
+    @property
+    def grad_norms_arr(self) -> np.ndarray:
+        if self._grad_norms_arr is None:
+            self.to_arrays()
+        if self._grad_norms_arr is None:
+            return np.array([], dtype=float)
+        return self._grad_norms_arr
+
     @property
     def num_epochs(self) -> int:
         return len(self.train_losses)

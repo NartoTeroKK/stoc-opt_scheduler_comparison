@@ -7,6 +7,7 @@ Two protocols:
 """
 from __future__ import annotations
 
+import numpy as np
 import torch
 import torch.nn as nn
 from sklearn.linear_model import LogisticRegression
@@ -114,6 +115,15 @@ def compute_empirical_L_star(
     Returns:
         L_star_non_convex: Minimum training loss achieved.
     """
+    # ─── Determinism: seed all global generators ─────────────────────────────
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+    # ──────────────────────────────────────────────────────────────────────────
+
     best_opt, best_sched, _ = _find_best_config(results_by_problem)
     if not best_opt:
         raise ValueError("No valid runs found in results_by_problem")
@@ -159,7 +169,7 @@ def compute_empirical_L_star(
     model = model.to(device)
 
     for epoch in range(extended_epochs):
-        train_loss, train_acc = train_one_epoch(
+        train_loss, train_acc, _ = train_one_epoch(
             model, dataloaders["train"], criterion,
             optimizer, scheduler, best_sched, device,
         )

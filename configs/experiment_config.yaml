@@ -38,4 +38,4 @@ paths:
 # Enums
 schedulers: [none, cosine, exponential, cyclic, one-cycle]
 optimizers: [sgd, adam]
-experiment_name: scheduler_comparison_v4
+experiment_name: scheduler_comparison_v5

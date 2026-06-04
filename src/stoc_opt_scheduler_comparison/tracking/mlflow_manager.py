@@ -5,8 +5,32 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 
 import mlflow
+
+
+def _flatten_dict(
+    d: dict[str, Any],
+    parent_key: str = "",
+    sep: str = ".",
+) -> dict[str, str]:
+    """Flatten a nested dict into dot-separated key → string values.
+
+    Lists/tuples are joined with commas.  None values are skipped.
+    """
+    items: dict[str, str] = {}
+    for k, v in d.items():
+        new_key = f"{parent_key}{sep}{k}" if parent_key else k
+        if v is None:
+            continue
+        if isinstance(v, dict):
+            items.update(_flatten_dict(v, new_key, sep=sep))
+        elif isinstance(v, (list, tuple)):
+            items[new_key] = ",".join(str(x) for x in v)
+        else:
+            items[new_key] = str(v)
+    return items
 
 
 class MLflowLogger:
@@ -41,8 +65,9 @@ class MLflowLogger:
 
     @staticmethod
     def log_params(params: dict) -> None:
-        """Log a dict of parameters."""
-        mlflow.log_params(params)
+        """Log a flat or nested dict of parameters (nested dicts are flattened)."""
+        flat = _flatten_dict(params)
+        mlflow.log_params(flat)
 
     @staticmethod
     def log_metrics(metrics: dict, step: int | None = None) -> None:
@@ -77,6 +102,38 @@ class MLflowLogger:
                 {f"test_{k}": v for k, v in history.test_metrics.items()
                  if isinstance(v, (int, float))}
             )
+
+    @staticmethod
+    def log_config(config, config_yaml_path: str | Path | None = None) -> None:
+        """Log the full ExperimentConfig as flattened params.
+
+        Optionally also log the YAML config file as an artifact.
+        """
+        flat = config.to_flat_dict()
+        mlflow.log_params(flat)
+
+        if config_yaml_path is not None:
+            yaml_path = Path(config_yaml_path)
+            if yaml_path.exists():
+                mlflow.log_artifact(str(yaml_path), artifact_path="config")
+
+    @staticmethod
+    def log_data_info(dataloaders: dict) -> None:
+        """Log dataset characteristics extracted from dataloaders dict."""
+        info = {}
+        if "n_features" in dataloaders:
+            info["n_features"] = dataloaders["n_features"]
+        if "n_classes" in dataloaders:
+            info["n_classes"] = dataloaders["n_classes"]
+        for split in ("train", "test"):
+            loader = dataloaders.get(split)
+            if loader is not None:
+                try:
+                    info[f"n_batches_{split}"] = len(loader)
+                    info[f"dataset_size_{split}"] = len(loader.dataset)
+                except (TypeError, AttributeError):
+                    pass
+        mlflow.log_params(info)
 
 from collections import defaultdict
 from stoc_opt_scheduler_comparison.evaluation.metrics import TrainingHistory 

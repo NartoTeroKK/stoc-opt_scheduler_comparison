@@ -1,232 +1,204 @@
 """
 Convergence metrics for stochastic optimization experiments.
 
-Six metrics: EtT, AUL, rho_hat, RV/CV, SI, Robbins-Monro check.
-Plus: compute_convergence_metrics() and aggregate_metrics() for batch processing.
+Metrics (from methodology):
+  - EtT (Epochs to Target): first epoch loss ≤ L_target = L* + 0.05·(L0 − L*)
+  - Suboptimality gap:     Δ = L_T* − L*
+  - AUL (Area Under Loss): trapezoidal integral of loss curve
+  - CV (Coefficient of Variation): σ/μ over full or post-warmup loss curve
+  - Gradient norm statistics: mean and std of gradient ℓ2-norm per epoch
+  - Convergence rate:      proportion of runs reaching L_target
+
+All metrics are computed per-seed first, then aggregated (mean ± std).
+Non-converging runs are excluded from EtT statistics.
 """
 from __future__ import annotations
 
 from collections import defaultdict
 
 import numpy as np
-import pandas as pd
-from scipy import stats
 import numpy.typing as npt
 
 
-from stoc_opt_scheduler_comparison.evaluation.metrics import TrainingHistory
-
-# Alias riutilizzabile in tutto il progetto
 FloatArray = npt.NDArray[np.float64]
 
-# ── Individual Metrics ───────────────────────────────────────────────────────────
+# ── Constants ─────────────────────────────────────────────────────────────
 
-def convergence_threshold(
-    L0: float,
-    L_star_global: float,
-    epsilon: float = 0.10,
-    relative: bool = True,
-) -> float:
-    """
-    Compute the convergence threshold used by epochs_to_threshold.
-
-    If relative=True:  threshold = L_star + epsilon * (L0 - L_star)
-                       → loss value at which epsilon-fraction of initial gap remains.
-    If relative=False: threshold = L_star + epsilon (absolute tolerance).
-
-    Returns nan if gap < 1e-12 (L0 already at global minimum).
-
-    Intended for external use: pass the returned value as a horizontal
-    reference line in loss curve plots to visualise the convergence target.
-    """
-    gap = L0 - L_star_global
-    if gap < 1e-12:
-        return float("nan")
-    return (L_star_global + epsilon * gap) if relative else (L_star_global + epsilon)
+# Level 1 (primary): 5 % of the initial (L0 − L*) gap.
+ETT_EPSILON = 0.05
 
 
-def epochs_to_threshold(
-    loss_curve: FloatArray,
-    L_star_global: float,
-    epsilon: float = 0.10,
-    relative: bool = True,
-) -> float:
-    L0 = float(loss_curve[0])
-    threshold = convergence_threshold(L0, L_star_global, epsilon, relative)
+# ── L₀ / L* helpers ───────────────────────────────────────────────────────
 
-    if np.isnan(threshold):
-        return float("nan")
-
-    if L0 <= threshold:
-        return 0.0
-
-    indices = np.where(np.array(loss_curve, dtype=float) <= threshold)[0]
-    return float(indices[0]) if len(indices) > 0 else float("nan")
-
-
-def area_under_loss(loss_curve: FloatArray, L_star_global: float) -> tuple[float, float]:
-    """
-    Trapezoidal integral of loss curve.
-    Returns (aul, aul_norm). Lower = faster convergence.
-
-    Normalization: area under a constant curve at initial value above L_star.
-    """
-    x = np.arange(len(loss_curve))
-    aul = float(np.trapezoid(loss_curve, x=x))
-
-    denominator = len(loss_curve) * float(loss_curve[0] - L_star_global)
-    aul_norm = aul / denominator if denominator > 1e-12 else float("inf")
-
-    return aul, aul_norm
-
-
-def empirical_convergence_rate(loss_curve: FloatArray, L_star_global: float, warm_up: int = 5) -> dict:
-    """
-    Estimate per-epoch convergence rate via log-linear regression on the optimality gap.
-
-    Regression is applied only on the asymptotic tail (second half of post-warm-up curve)
-    to better capture the true linear convergence regime, avoiding transient dynamics.
-
-    rho_hat << 1 = fast convergence
-    rho_hat ~  1 = slow / stalling
-    rho_hat >  1 = divergence
-
-    If R² < 0.80, the loss trajectory is not log-linear (e.g. non-convex oscillations),
-    and rho_hat is set to None to avoid misleading estimates.
-    """
-    # Skip warm-up epochs to avoid transient dynamics
-    post_warmup = np.asarray(loss_curve[warm_up:], dtype=float)
-
-    if len(post_warmup) < 4:
-        return {"rho_hat": None, "log_E0": 0.0, "R2": 0.0, "slope": 0.0, "std_err": 0.0}
-
-    # Use only the asymptotic tail (second half) to fit the linear convergence regime
-    half = len(post_warmup) // 2
-    loss_arr = post_warmup[half:]
-
-    # Optimality gap: clipped to avoid log(0) or log of negative values
-    E_k = np.clip(loss_arr - L_star_global, a_min=1e-12, a_max=None)
-    log_E = np.log(E_k)
-    k = np.arange(len(log_E), dtype=float)
-
-    lr_result = stats.linregress(k, log_E)
-
-    r2 = float(lr_result.rvalue ** 2)  # type: ignore[union-attr]
-
-    # If R² < 0.80, the log-linear model does not fit: convergence is non-linear
-    rho_hat = float(np.exp(lr_result.slope)) if r2 >= 0.80 else float("nan") # type: ignore[union-attr]
-
-    return {
-        "rho_hat": rho_hat,
-        "log_E0": float(lr_result.intercept),  # type: ignore[union-attr]
-        "R2": r2,
-        "slope": float(lr_result.slope),       # type: ignore[union-attr]
-        "std_err": float(lr_result.stderr),    # type: ignore[union-attr]
-    }
-
-
-def rolling_variance_cv(loss_curve: FloatArray, window_frac: float = 0.15) -> dict:
-    """Variance and CV on final window of loss curve. Measures stability."""
-    W = max(5, int(len(loss_curve) * window_frac))
-    window = loss_curve[-W:]
-    mu = float(np.mean(window))
-    rv = float(np.var(window, ddof=0))
-    cv = float(np.std(window, ddof=0) / mu) if mu > 1e-12 else float("inf")
-    return {"RV": rv, "CV_final": cv, "mu_final": mu, "W": W}
-
-
-def smoothness_index(loss_curve: FloatArray) -> dict:
-    """Mean absolute epoch-to-epoch change. Lower = smoother trajectory."""
-    diffs = np.abs(np.diff(loss_curve))
-    mid = len(diffs) // 2
-    return {
-        "SI":            float(np.mean(diffs)),           # global
-        "SI_asymptotic": float(np.mean(diffs[mid:])),     # stability phase
-    }
-
-
-
-# ── Batch Processing ─────────────────────────────────────────────────────────────
-
-_DEFAULT_PARAMS = {
-    "convex": {
-        "epsilon": 0.10,           # ε-relative suboptimality: threshold at 90% of (L0 - L_star) gap
-        "relative_epsilon": True,  # if True: threshold = L_star + ε*(L0 - L_star), else absolute
-        "window_frac": 0.10,       # trailing window for CV_final and RV: last 10% of epochs
-        "warm_up": 5,              # epochs excluded from rho_hat estimate: 5% of total (transient phase)
-    },
-    "non-convex": {
-        "epsilon": 0.10,           # same ε for cross-problem comparability
-        "relative_epsilon": True,
-        "window_frac": 0.10,       # last 10 epochs out of 100 for asymptotic stability estimate
-        "warm_up": 10,             # 10% warm-up exclusion: higher gradient variance with dropout
-    },
-}
-
-
-def compute_L_star_global(results_by_problem: dict) -> tuple[float, str]:
-    """
-    Find global minimum loss across all runs for a problem type.
+def compute_global_L_star(results_by_problem: dict) -> float:
+    """Global minimum loss across all runs for a problem type.
 
     Returns:
-        (L_star, best_run_name) - minimum loss value and the run that achieved it.
+        Smallest train loss observed across every seed and configuration.
+        Returns NaN when there are no valid runs.
     """
     best_loss = float("inf")
-    best_run = ""
-
-    for run_name, history in results_by_problem.items():
-        if history and history.train_losses:
+    for history in results_by_problem.values():
+        if history is not None and history.train_losses:
             run_min = min(history.train_losses)
             if run_min < best_loss:
                 best_loss = run_min
-                best_run = run_name
+    return best_loss if best_loss < float("inf") else float("nan")
 
-    return best_loss if best_run else 0.0, best_run
+
+def compute_global_initial_loss(results_by_problem: dict) -> float:
+    """Mean of the first-epoch loss across all runs (L₀).
+
+    Serves as baseline for defining the target loss L_target.
+    Returns NaN if no valid runs exist.
+    """
+    losses: list[float] = []
+    for history in results_by_problem.values():
+        if history is not None and history.train_losses:
+            losses.append(history.train_losses[0])
+    if not losses:
+        return float("nan")
+    return float(np.mean(losses))
+
+
+def compute_target_loss(L_star: float, L0: float, epsilon: float = ETT_EPSILON) -> float:
+    """Target loss: L* + ε · (L₀ − L*)."""
+    return L_star + epsilon * (L0 - L_star)
+
+
+# ── Per-seed metric functions ─────────────────────────────────────────────
+
+def epochs_to_target(loss_curve: FloatArray, L_target: float, max_epochs: int) -> int:
+    """Earliest epoch where loss ≤ L_target.
+
+    Returns *max_epochs* when the target is never reached (callers should
+    treat this as *did not converge* and convert to NaN for aggregation).
+    """
+    indices = np.where(loss_curve <= L_target)[0]
+    if len(indices) > 0:
+        return int(indices[0])
+    return max_epochs
+
+
+def suboptimality_gap(loss_curve: FloatArray, L_star: float) -> float:
+    """Δ = final loss − L*."""
+    return float(loss_curve[-1]) - L_star
+
+
+def area_under_loss(loss_curve: FloatArray) -> float:
+    """Trapezoidal integral of the loss curve.  Lower = faster drop."""
+    return float(np.trapezoid(loss_curve, x=np.arange(len(loss_curve))))
+
+
+def coefficient_of_variation(loss_curve: FloatArray, t0: int = 0) -> float:
+    """σ/μ over loss_curve[t₀:] (default: full curve).
+
+    Args:
+        loss_curve: per-epoch loss values.
+        t0: warm-up epochs to exclude (0 = use whole curve).
+
+    Returns:
+        CV, or NaN if the mean is near zero.
+    """
+    segment = loss_curve[t0:]
+    if len(segment) < 2:
+        return float("nan")
+    mu = float(np.mean(segment))
+    if abs(mu) < 1e-12:
+        return float("nan")
+    return float(np.std(segment, ddof=0)) / mu
+
+
+def gradient_norm_statistics(grad_norms: FloatArray) -> tuple[float, float]:
+    """Mean and std of per-epoch gradient ℓ2-norms.
+
+    Returns (NaN, NaN) when *grad_norms* is empty (e.g. not logged).
+    """
+    if len(grad_norms) == 0:
+        return float("nan"), float("nan")
+    return float(np.mean(grad_norms)), float(np.std(grad_norms, ddof=0))
+
+
+# ── Run-name parsing ──────────────────────────────────────────────────────
 
 def _parse_run_name(name: str) -> tuple[str, str, str, int] | None:
-    """Parse 'convex_cosine_sgd_42' → (problem, scheduler, optimizer, seed)."""
-    parts = name.split('_')
+    """Parse ``convex_cosine_sgd_42`` → (problem, scheduler, optimizer, seed)."""
+    parts = name.split("_")
     if len(parts) != 4:
         return None
     return parts[0], parts[1], parts[2], int(parts[3])
+
+
+# ── Batch processing ──────────────────────────────────────────────────────
+
+def compute_all_metrics(
+    loss_curve: FloatArray,
+    train_accuracies: FloatArray,
+    lr_history: FloatArray,
+    L_star_global: float,
+    L_target: float,
+    max_epochs: int,
+    t0_cv: int = 0,
+) -> dict:
+    """All convergence metrics for a single run.
+
+    EtT is NaN for runs that never reach L_target (excluded from aggregation).
+    Gradient-norm statistics return NaN when *grad_norms* are unavailable.
+    """
+    ett_raw = epochs_to_target(loss_curve, L_target, max_epochs)
+    ett = float(ett_raw) if ett_raw < max_epochs else float("nan")
+
+    aul = area_under_loss(loss_curve)
+    subopt = suboptimality_gap(loss_curve, L_star_global)
+    cv = coefficient_of_variation(loss_curve, t0=t0_cv)
+
+    return {
+        "train_losses_arr": loss_curve,
+        "train_accuracies_arr": train_accuracies,
+        "learning_rates_arr": lr_history,
+        # Convergence metrics
+        "EtT": ett,
+        "AUL": round(aul, 6),
+        "suboptimality_gap": round(subopt, 8),
+        "CV": round(cv, 6),
+        # Gradient norm statistics (filled by caller when available)
+        "mean_gradient_norm": float("nan"),
+        "std_gradient_norm": float("nan"),
+        # Test metrics (filled by caller)
+        "test_loss": 0.0,
+        "test_accuracy": 0.0,
+    }
 
 
 def compute_convergence_metrics(
     results: dict,
     problem_type: str,
     L_star: float,
-    **metric_kwargs,
+    L0: float,
+    max_epochs: int,
 ) -> dict[str, dict]:
-    """
-    Compute convergence metrics for all experiment runs.
+    """Compute convergence metrics for every run in *results*.
 
     Args:
-        results: {problem_type: {run_name: {"history": TrainingHistory, "test_metrics": {...}}}}
-        problem_type: "convex" or "non-convex"
-        optimizer: Optional filter (e.g., "sgd")
-        scheduler: Optional filter (e.g., "cosine")
-        **metric_kwargs: Override default epsilon, window_frac, warm_up
+        results: ``{problem_type: {run_name: TrainingHistory}}``
+        problem_type: ``"convex"`` or ``"non-convex"``
+        L_star: global minimum loss (from :func:`compute_global_L_star`)
+        L0: global initial loss (from :func:`compute_global_initial_loss`)
+        max_epochs: total number of training epochs.
 
     Returns:
-        List of metric dicts, one per run.
+        ``{run_name: metric_dict}`` — one entry per valid run.
     """
     if problem_type not in results:
-        raise ValueError(f"Unknown problem_type: {problem_type}")
-    
+        raise ValueError(f"Unknown problem_type: {problem_type!r}")
+
     results_by_problem = results[problem_type]
+    L_target = compute_target_loss(L_star, L0)
 
-    params = {**_DEFAULT_PARAMS.get(problem_type, {}), **metric_kwargs}
-    # return
-    metrics_dict: dict[str, dict] = {} 
-
+    metrics_dict: dict[str, dict] = {}
 
     for run_name, history in results_by_problem.items():
-        if history is None:
-            continue
-
-        test_metrics = history.test_metrics
-
-        if history.train_losses_arr.size == 0:
+        if history is None or history.train_losses_arr.size == 0:
             continue
 
         parsed = _parse_run_name(run_name)
@@ -240,395 +212,106 @@ def compute_convergence_metrics(
             train_accuracies=history.train_accuracies_arr,
             lr_history=history.learning_rates_arr,
             L_star_global=L_star,
-            **params,
+            L_target=L_target,
+            max_epochs=max_epochs,
         )
+
+        test_metrics = history.test_metrics
         m["test_loss"] = test_metrics.get("loss", 0.0)
         m["test_accuracy"] = test_metrics.get("accuracy", 0.0)
         m["optimizer"] = opt
         m["scheduler"] = sched
         m["seed"] = seed
 
-        metrics_dict[run_name] = m   
+        metrics_dict[run_name] = m
 
     return metrics_dict
 
 
-def compute_all_metrics(
-    loss_curve: FloatArray,
-    train_accuracies: FloatArray,
-    lr_history: FloatArray,
-    L_star_global: float,
-    epsilon: float = 1e-3,
-    relative_epsilon: bool = True,
-    window_frac: float = 0.15,
-    warm_up: int = 5,
-) -> dict:
-    """Compute all convergence metrics for a single run. Returns flat dict."""
-    ett = epochs_to_threshold(loss_curve, L_star_global, epsilon, relative_epsilon)
-    aul, aul_n = area_under_loss(loss_curve, L_star_global)
-    conv = empirical_convergence_rate(loss_curve, L_star_global, warm_up)
-    rv_cv = rolling_variance_cv(loss_curve, window_frac)
-    si = smoothness_index(loss_curve)
-    subopt_gap = compute_suboptimality_gap(loss_curve, L_star_global)
-
-    return {
-        "train_losses_arr": loss_curve,
-        "train_accuracies_arr": train_accuracies,
-        "learning_rates_arr": lr_history,
-        "EtT": ett,
-        "AUL": round(aul, 6),
-        "AUL_norm": round(aul_n, 6),
-        "rho_hat": round(conv["rho_hat"], 6) if not np.isnan(conv["rho_hat"]) else float("nan"),
-        "R2": round(conv["R2"], 4),
-        "RV": round(rv_cv["RV"], 8),
-        "CV_final": round(rv_cv["CV_final"], 6),
-        "mu_final": round(rv_cv["mu_final"], 6),
-        "SI": round(si["SI"], 6),
-        "SI_asymptotic": round(si["SI_asymptotic"], 6),
-        "suboptimality_gap": round(subopt_gap, 8),
-    }
+# ── Aggregation ───────────────────────────────────────────────────────────
 
 def _is_valid(v) -> bool:
+    """True for finite numeric values; False for None, NaN, Inf."""
     if v is None:
         return False
     try:
-        return not np.isnan(v)
+        return not np.isnan(v) and not np.isinf(v)
     except (TypeError, ValueError):
-        return True  # non-float (es. bool, str) sono sempre validi
+        return True
 
-# Metriche con aggregazione standard: media + std
-STANDARD_METRICS = ["AUL", "AUL_norm", "rho_hat", "R2", "RV", "CV_final", "SI", "SI_asymptotic",
-                    "test_loss", "test_accuracy", "suboptimality_gap"]
+
+SCALAR_METRICS = [
+    "AUL",
+    "suboptimality_gap",
+    "CV",
+    "mean_gradient_norm",
+    "std_gradient_norm",
+    "test_loss",
+    "test_accuracy",
+]
+
 
 def aggregate_metrics(metrics_dict: dict[str, dict]) -> dict:
-    """
-    Aggregate metrics by optimizer-scheduler combination (mean ± std across seeds).
+    """Aggregate per-seed metrics by (optimizer, scheduler).
 
-    For each (optimizer, scheduler) pair:
-    - Scalar metrics: mean and std across seeds
-    - Training curves (train_losses, train_accuracies, learning_rates):
-      Stack arrays, compute mean and std along axis=0 → returns (mean_array, std_array)
+    For each scalar metric: mean ± std across **valid** entries.
+    EtT is aggregated **only over converging runs** (non-NaN).
+    Convergence rate: ``n_converged / n_total``.
 
-    Returns:
-        Dict with keys: "{optimizer}_{scheduler}" -> aggregated metrics dict
+    Training curves (losses, accuracies, learning rates) are stacked and
+    their mean ± std per epoch is stored as arrays.
     """
     groups = defaultdict(list)
     for m in metrics_dict.values():
         groups[f"{m['optimizer']}_{m['scheduler']}"].append(m)
 
-    aggregated = {}
+    aggregated: dict = {}
     for key, group in groups.items():
         opt, sched = key.split("_", 1)
-        agg = {"optimizer": opt, "scheduler": sched, "n_runs": len(group)}
+        agg: dict = {"optimizer": opt, "scheduler": sched, "n_runs": len(group)}
 
-        # Scalar metrics: mean and std across seeds (only keys that exist)
-        all_keys = set()
-        for m in group:
-            all_keys.update(m.keys())
+        # -- Scalar metrics: mean ± std --
+        for metric_key in SCALAR_METRICS:
+            values = [
+                m[metric_key]
+                for m in group
+                if metric_key in m and _is_valid(m[metric_key])
+            ]
+            if values:
+                agg[f"{metric_key}_mean"] = float(np.mean(values))
+                agg[f"{metric_key}_std"] = float(np.std(values))
 
-        # EtT separato: media + std + mediana + n_converged
-        for metric_key in STANDARD_METRICS:
-            if metric_key in all_keys:
-                values = [m[metric_key] for m in group if metric_key in m and _is_valid(m[metric_key])]
-
-                if values:
-                    agg[f"{metric_key}_mean"] = float(np.mean(values))
-                    agg[f"{metric_key}_std"]  = float(np.std(values))
-
-        # EtT: aggregazione robusta
+        # -- EtT: converging runs only + convergence rate --
         ett_all = [m["EtT"] for m in group if "EtT" in m]
         ett_valid = [v for v in ett_all if _is_valid(v)]
-
         n_total = len(ett_all)
-        n_valid = len(ett_valid)
+        n_converged = len(ett_valid)
 
-        agg["EtT_convergence_rate"] = n_valid / n_total if n_total > 0 else float("nan")
+        agg["EtT_convergence_rate"] = (
+            n_converged / n_total if n_total > 0 else float("nan")
+        )
 
         if ett_valid:
-            agg["EtT_mean"]   = float(np.mean(ett_valid))
-            agg["EtT_std"]    = float(np.std(ett_valid))
+            agg["EtT_mean"] = float(np.mean(ett_valid))
+            agg["EtT_std"] = float(np.std(ett_valid))
             agg["EtT_median"] = float(np.median(ett_valid))
         else:
-            agg["EtT_mean"]   = float("nan")
-            agg["EtT_std"]    = float("nan")
+            agg["EtT_mean"] = float("nan")
+            agg["EtT_std"] = float("nan")
             agg["EtT_median"] = float("nan")
 
-        # Training curves: stack numpy arrays, compute mean/std
-        loss_curves = [m["train_losses_arr"] for m in group if "train_losses_arr" in m]
-        acc_curves = [m["train_accuracies_arr"] for m in group if "train_accuracies_arr" in m]
-        lr_curves = [m["learning_rates_arr"] for m in group if "learning_rates_arr" in m]
-
-        if loss_curves:
-            stacked = np.stack(loss_curves)
-            agg["train_losses_mean"] = stacked.mean(axis=0)
-            agg["train_losses_std"] = stacked.std(axis=0)
-
-        if acc_curves:
-            stacked = np.stack(acc_curves)
-            agg["train_accuracies_mean"] = stacked.mean(axis=0)
-            agg["train_accuracies_std"] = stacked.std(axis=0)
-
-        if lr_curves:
-            stacked = np.stack(lr_curves)
-            agg["learning_rates_mean"] = stacked.mean(axis=0)
-            agg["learning_rates_std"] = stacked.std(axis=0)
+        # -- Training curve arrays --
+        for arr_key, mean_key, std_key in [
+            ("train_losses_arr", "train_losses_mean", "train_losses_std"),
+            ("train_accuracies_arr", "train_accuracies_mean", "train_accuracies_std"),
+            ("learning_rates_arr", "learning_rates_mean", "learning_rates_std"),
+        ]:
+            curves = [m[arr_key] for m in group if arr_key in m and m[arr_key].size > 0]
+            if curves:
+                stacked = np.stack(curves)
+                agg[mean_key] = stacked.mean(axis=0)
+                agg[std_key] = stacked.std(axis=0)
 
         aggregated[key] = agg
 
     return aggregated
-
-
-# ── E_target and Sub-optimality Gap ──────────────────────────────────────────
-
-
-def compute_global_initial_loss(results_by_problem: dict) -> float:
-    """Compute the global initial loss (L0) across all runs at epoch 0.
-
-    L0 is the empirical mean of the first recorded loss value across every
-    seed and configuration within a problem type. It serves as the baseline
-    for defining the global target loss (L_target).
-    """
-    losses: list[float] = []
-    for history in results_by_problem.values():
-        if history is not None and history.train_losses:
-            losses.append(history.train_losses[0])
-    if not losses:
-        return float("nan")
-    return float(np.mean(losses))
-
-
-def compute_target_loss(L_star: float, epsilon: float, problem_type: str, L0: float = 0.0) -> float:
-    """Compute the target loss for convergence analysis based on the problem type.
-
-    For convex problems, an absolute tolerance is used: L_target = L_star + epsilon
-    For non-convex problems, a relative tolerance is used: L_target = L_star + epsilon * (L0 - L_star)
-
-    Args:
-        L_star: Reference minimum loss.
-        epsilon: Tolerance level (absolute for convex, relative for non-convex).
-        problem_type: Type of the problem, either "convex" or "non-convex".
-        L0: Global initial loss (mean across all runs at epoch 0). Required only for non-convex.
-
-    Returns:
-        Target loss threshold value.
-
-    Raises:
-        ValueError: If problem_type is not "convex" or "non-convex".
-    """
-    # if problem_type == "convex":
-    #     return L_star + epsilon
-    # elif problem_type == "non-convex":
-    return L_star + epsilon * (L0 - L_star)
-    # else:
-    #     raise ValueError("problem_type must be either 'convex' or 'non-convex'")
-
-
-def compute_suboptimality_gap(loss_curve: FloatArray, L_star: float) -> float:
-    """Compute the sub-optimality gap: difference between final loss and L*."""
-    final_loss = float(loss_curve[-1])
-    return final_loss - L_star
-
-
-def compute_epochs_to_target(
-    loss_curve: FloatArray,
-    L_target: float,
-    max_epochs: int,
-) -> int:
-    """Find the first epoch where loss falls below L_target.
-
-    Returns the epoch index (0-indexed) of the first occurrence.
-    If the target is never reached, returns max_epochs (timeout).
-    """
-    indices = np.where(loss_curve <= L_target)[0]
-    if len(indices) > 0:
-        return int(indices[0])
-    return max_epochs
-
-
-# ── E_target Level Constants ────────────────────────────────────────────────
-
-E_TARGET_LEVELS: dict[str, float] = {
-    "E_target_lv1": 0.05,
-    "E_target_lv2": 0.025,
-    "E_target_lv3": 0.01,
-}
-
-
-def build_convergence_dataframe(
-    results_by_problem: dict,
-    problem_type: str,
-    L_star: float,
-    epsilon: float,
-    max_epochs: int,
-    parse_run_name_fn=None,
-) -> pd.DataFrame:
-    """Build a DataFrame for convergence boxplot visualization.
-
-    For each configuration (optimizer+scheduler), extracts the first epoch
-    index where each seed's loss falls below L_target. Seeds that never
-    converge are assigned a timeout value equal to max_epochs.
-
-    Args:
-        results_by_problem: {run_name: TrainingHistory} dict.
-        L_star: Reference minimum loss.
-        epsilon: Relative tolerance level.
-        max_epochs: Maximum training epochs (timeout value).
-        parse_run_name_fn: Custom run name parser (optional).
-
-    Returns:
-        DataFrame with columns: Configuration, Seed, Epochs_to_Target.
-    """
-    L0 = compute_global_initial_loss(results_by_problem)
-    if np.isnan(L0):
-        return pd.DataFrame(columns=["Configuration", "Seed", "Epochs_to_Target"])
-
-    L_target = compute_target_loss(L_star, epsilon, problem_type, L0)
-
-    if parse_run_name_fn is None:
-        parse_run_name_fn = _parse_run_name
-
-    records: list[dict] = []
-
-    for run_name, history in results_by_problem.items():
-        parsed = parse_run_name_fn(run_name)
-        if parsed is None:
-            continue
-        _, sched, opt, seed = parsed
-        if history is None or history.train_losses_arr.size == 0:
-            continue
-
-        config_name = f"{opt}_{sched}"
-        k_target = compute_epochs_to_target(
-            history.train_losses_arr, L_target, max_epochs,
-        )
-
-        records.append({
-            "Configuration": config_name,
-            "Seed": seed,
-            "Epochs_to_Target": k_target,
-            "L_target": L_target,
-        })
-
-    if not records:
-        return pd.DataFrame(columns=["Configuration", "Seed", "Epochs_to_Target"])
-
-    return pd.DataFrame(records)
-
-
-def compute_all_e_target_levels(
-    results_by_problem: dict,
-    problem_type: str,
-    L_star: float,
-    max_epochs: int,
-    levels: dict[str, float],
-) -> dict[str, pd.DataFrame]:
-    """Compute E_target DataFrames for all specified tolerance levels.
-
-    Args:
-        results_by_problem: {run_name: TrainingHistory} dict.
-        L_star: Reference minimum loss.
-        max_epochs: Maximum training epochs.
-        levels: Dict mapping level names to epsilon values.
-
-    Returns:
-        Dict of {level_name: DataFrame} with convergence data.
-    """
-    return {
-        name: build_convergence_dataframe(
-            results_by_problem, problem_type, L_star, eps, max_epochs,
-        )
-        for name, eps in levels.items()
-    }
-
-
-# ── Aggregated Curve Metrics ──────────────────────────────────────────────
-
-
-def compute_aggregated_config_metrics(
-    aggregated: dict[str, dict],
-    per_run_metrics: dict[str, dict],
-    L_star: float,
-    L0: float,
-    problem_type: str,
-    max_epochs: int,
-    e_target_epsilon: float = 0.05,
-) -> pd.DataFrame:
-    """Compute convergence metrics on per-configuration AVERAGE loss curves.
-
-    For each (optimizer, scheduler) configuration:
-      1. Compute suboptimality_gap, AUL_norm, CV_final, SI_asymptotic, RV
-         on the MEAN loss curve (aggregated across seeds).
-      2. Compute E_target at the specified tolerance (default lv1 = 0.05).
-      3. Count converging runs from per-run final losses <= L_target.
-
-    Returns a DataFrame with one row per configuration, sorted by E_target.
-
-    Per-run scalar means (test_loss, test_accuracy) are taken from the
-    aggregated dict to avoid re-aggregating.
-    """
-    # L_target for the given tolerance
-    L_target = compute_target_loss(L_star, e_target_epsilon, problem_type, L0)
-    params = _DEFAULT_PARAMS.get(problem_type, {})
-
-    # Group per-run metrics by configuration for convergence counting
-    config_runs: dict[str, list[dict]] = defaultdict(list)
-    for run_name, m in per_run_metrics.items():
-        cfg = f"{m['optimizer']}_{m['scheduler']}"
-        config_runs[cfg].append(m)
-
-    records: list[dict] = []
-    for config_name, curves in aggregated.items():
-        if "train_losses_mean" not in curves:
-            continue
-
-        mean_curve = curves["train_losses_mean"]
-
-        # All metrics on the mean curve
-        metrics = compute_all_metrics(
-            loss_curve=mean_curve,
-            train_accuracies=curves.get("train_accuracies_mean", np.array([])),
-            lr_history=curves.get("learning_rates_mean", np.array([])),
-            L_star_global=L_star,
-            **params,
-        )
-
-        # E_target at specified tolerance on the mean curve
-        e_target = compute_epochs_to_target(mean_curve, L_target, max_epochs)
-
-        # Count converging runs: final loss <= L_target
-        runs = config_runs.get(config_name, [])
-        n_cvg = 0
-        for run in runs:
-            arr = run.get("train_losses_arr", np.array([]))
-            if len(arr) > 0 and arr[-1] <= L_target:
-                n_cvg += 1
-        n_total = curves.get("n_runs", len(runs))
-
-        # Parse optimizer / scheduler
-        parts = config_name.split("_", 1)
-        opt = parts[0]
-        sched = parts[1] if len(parts) > 1 else ""
-
-        records.append({
-            "optimizer": opt,
-            "scheduler": sched,
-            "n_runs": n_total,
-            "n_converging_runs": n_cvg,
-            "suboptimality_gap": round(metrics["suboptimality_gap"], 8),
-            "AUL_norm": round(metrics["AUL_norm"], 6),
-            "E_target": e_target,
-            "CV_final": round(metrics["CV_final"], 6),
-            "SI_asymptotic": round(metrics["SI_asymptotic"], 6),
-            "RV": round(metrics["RV"], 10),
-            "test_loss": round(curves.get("test_loss_mean", float("nan")), 6),
-            "test_accuracy": round(curves.get("test_accuracy_mean", float("nan")), 6),
-            "L_target": L_target,
-        })
-
-    if not records:
-        return pd.DataFrame()
-    
-    df = pd.DataFrame(records)
-    # Sort: converging configs first (by E_target), then non-converging
-    df = df.sort_values("E_target", ascending=True).reset_index(drop=True)
-    return df

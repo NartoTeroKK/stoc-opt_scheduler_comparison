@@ -70,6 +70,47 @@ class ExperimentConfig:
     optimizers: tuple[str, ...] = ("sgd", "adam")
     experiment_name: str = "scheduler_comparison"
 
+    def to_flat_dict(self, prefix: str = "") -> dict[str, str]:
+        """Flatten all config fields into a dict of strings for MLflow logging.
+
+        Nested fields (experiments, scheduler_params, paths, lr) are
+        expanded with dot-separated keys. Tuples/lists are comma-joined.
+        """
+        flat: dict[str, str] = {}
+
+        def _add(key: str, value: Any) -> None:
+            full_key = f"{prefix}.{key}" if prefix else key
+            if isinstance(value, (list, tuple)):
+                flat[full_key] = ",".join(str(v) for v in value)
+            elif isinstance(value, dict):
+                for k, v in value.items():
+                    _add(f"{full_key}.{k}", v)
+            elif isinstance(value, Paths):
+                flat[f"{full_key}.data_dir"] = value.data_dir
+                flat[f"{full_key}.reports_dir"] = value.reports_dir
+                flat[f"{full_key}.figures_dir"] = value.figures_dir
+            elif isinstance(value, ExperimentDef):
+                flat[f"{full_key}.model"] = value.model
+                flat[f"{full_key}.dataset"] = value.dataset
+                flat[f"{full_key}.batch_size"] = str(value.batch_size)
+                flat[f"{full_key}.epochs"] = str(value.epochs) if value.epochs else "inherit"
+            else:
+                flat[full_key] = str(value)
+
+        _add("seeds", self.seeds)
+        _add("test_size", self.test_size)
+        _add("batch_size", self.batch_size)
+        _add("epochs", self.epochs)
+        _add("lr", dict(self.lr))
+        _add("scheduler_params", dict(self.scheduler_params))
+        _add("paths", self.paths)
+        _add("experiments", dict(self.experiments))
+        _add("schedulers", self.schedulers)
+        _add("optimizers", self.optimizers)
+        _add("experiment_name", self.experiment_name)
+
+        return flat
+
 
 def _parse_raw(raw: dict[str, Any]) -> dict[str, Any]:
     """Convert raw YAML dict into ExperimentConfig-compatible kwargs."""
