@@ -3,6 +3,7 @@ Training engine - train_one_epoch(), evaluate(), train_loop().
 
 Device-agnostic, works with any nn.Module, optimizer, scheduler, and DataLoader.
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -17,14 +18,15 @@ from stoc_opt_scheduler_comparison.evaluation.metrics import TrainingHistory
 
 PER_BATCH_SCHEDULERS = {"cyclic", "one-cycle"}
 
+
 def _compute_grad_norm(model: nn.Module) -> float:
     """ℓ2-norm of the gradient across all parameters."""
     total_norm = 0.0
     for p in model.parameters():
         if p.grad is not None:
             param_norm = p.grad.data.norm(2).item()
-            total_norm += param_norm ** 2
-    return total_norm ** 0.5
+            total_norm += param_norm**2
+    return total_norm**0.5
 
 
 def train_one_epoch(
@@ -81,7 +83,11 @@ def train_one_epoch(
         total += y_batch.size(0)
         correct += (preds == y_batch).sum().item()
 
-    mean_grad_norm = (total_grad_norm / n_batches) if log_grad_norms and n_batches > 0 else float("nan")
+    mean_grad_norm = (
+        (total_grad_norm / n_batches)
+        if log_grad_norms and n_batches > 0
+        else float("nan")
+    )
     return total_loss / total, correct / total, mean_grad_norm
 
 
@@ -118,6 +124,7 @@ def evaluate(
         all_labels.extend(y_batch.cpu().numpy())
 
     import numpy as np
+
     return {
         "loss": total_loss / total,
         "accuracy": correct / total,
@@ -132,7 +139,7 @@ def train_loop(
     test_loader: DataLoader,
     optimizer: optim.Optimizer,
     scheduler: _LRScheduler,
-    scheduler_name: str,                
+    scheduler_name: str,
     epochs: int,
     device: torch.device,
     verbose: int = 10,
@@ -161,8 +168,14 @@ def train_loop(
 
     for epoch in range(epochs):
         train_loss, train_acc, mean_grad_norm = train_one_epoch(
-            model, train_loader, criterion,
-            optimizer, scheduler, scheduler_name, device,
+            model,
+            train_loader,
+            criterion,
+            optimizer,
+            scheduler,
+            scheduler_name,
+            device,
+            log_grad_norms=True,
         )
 
         # LR registrato DOPO lo step — riflette il valore usato alla prossima epoca
@@ -178,9 +191,11 @@ def train_loop(
         # Per-epoch step — skippato per scheduler per-batch (già steppati dentro train_one_epoch)
         if scheduler_name not in PER_BATCH_SCHEDULERS:
             scheduler.step()
-            
+
         if verbose > 0 and (epoch + 1) % verbose == 0:
-            print(f"  Epoch {epoch+1}/{epochs}: loss={train_loss:.4f}, acc={train_acc:.4f}, lr={lr:.6f}")
+            print(
+                f"  Epoch {epoch + 1}/{epochs}: loss={train_loss:.4f}, acc={train_acc:.4f}, lr={lr:.6f}"
+            )
 
     test_metrics = evaluate(model, test_loader, criterion, device)
     history.set_test_metrics(test_metrics)

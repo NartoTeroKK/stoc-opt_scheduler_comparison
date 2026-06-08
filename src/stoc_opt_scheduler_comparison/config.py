@@ -1,6 +1,7 @@
 """
 Configuration module - YAML config loader + typed ExperimentConfig dataclass.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -13,6 +14,7 @@ import yaml
 @dataclass(frozen=True)
 class SchedulerParams:
     """Parameters for a single scheduler."""
+
     gamma: float = 0.95
     T_max: int = 50
     eta_min: float = 1e-6
@@ -27,13 +29,14 @@ class SchedulerParams:
 @dataclass(frozen=True)
 class ExperimentDef:
     """Definition of a single experiment (model + dataset pair).
-    
+
     Attributes:
         model: Model architecture name.
         dataset: Dataset name.
         batch_size: Batch size for data loading.
         epochs: Number of epochs (overrides global config.epochs if set).
     """
+
     model: str
     dataset: str
     batch_size: int
@@ -43,6 +46,7 @@ class ExperimentDef:
 @dataclass(frozen=True)
 class Paths:
     """Output directory paths."""
+
     data_dir: str = "data/processed"
     reports_dir: str = "reports"
     figures_dir: str = "reports/figures"
@@ -58,6 +62,7 @@ class ExperimentConfig:
         config.seeds          # [42, 88, 123, 256, 333]
         config.experiments    # {"convex": ExperimentDef(...), ...}
     """
+
     seeds: tuple[int, ...] = (42, 88, 123, 256, 333)
     test_size: float = 0.2
     batch_size: int = 128
@@ -66,7 +71,13 @@ class ExperimentConfig:
     scheduler_params: dict[str, dict[str, Any]] = field(default_factory=dict)
     paths: Paths = field(default_factory=Paths)
     experiments: dict[str, ExperimentDef] = field(default_factory=dict)
-    schedulers: tuple[str, ...] = ("none", "cosine", "exponential", "cyclic", "one-cycle")
+    schedulers: tuple[str, ...] = (
+        "none",
+        "cosine",
+        "exponential",
+        "cyclic",
+        "one-cycle",
+    )
     optimizers: tuple[str, ...] = ("sgd", "adam")
     experiment_name: str = "scheduler_comparison"
 
@@ -93,7 +104,9 @@ class ExperimentConfig:
                 flat[f"{full_key}.model"] = value.model
                 flat[f"{full_key}.dataset"] = value.dataset
                 flat[f"{full_key}.batch_size"] = str(value.batch_size)
-                flat[f"{full_key}.epochs"] = str(value.epochs) if value.epochs else "inherit"
+                flat[f"{full_key}.epochs"] = (
+                    str(value.epochs) if value.epochs else "inherit"
+                )
             else:
                 flat[full_key] = str(value)
 
@@ -160,17 +173,20 @@ def _parse_raw(raw: dict[str, Any]) -> dict[str, Any]:
     )
 
     # Experiments
-    global_epochs = int(raw.get("epochs", 100))
     exp_raw = raw.get("experiments", {})
     parsed["experiments"] = {
-    name: ExperimentDef(
-        model=defn["model"],
-        dataset=defn["dataset"],
-        batch_size=int(defn.get("batch_size", 128)),  # per-experiment with global fallback
-        epochs=int(defn["epochs"]) if "epochs" in defn else None,  # None = use global epochs
-    )
-    for name, defn in exp_raw.items()
-}
+        name: ExperimentDef(
+            model=defn["model"],
+            dataset=defn["dataset"],
+            batch_size=int(
+                defn.get("batch_size", 128)
+            ),  # per-experiment with global fallback
+            epochs=int(defn["epochs"])
+            if "epochs" in defn
+            else None,  # None = use global epochs
+        )
+        for name, defn in exp_raw.items()
+    }
 
     return parsed
 

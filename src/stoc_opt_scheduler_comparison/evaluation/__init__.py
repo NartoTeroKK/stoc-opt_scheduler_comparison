@@ -1,4 +1,5 @@
 """Evaluation metrics module."""
+
 from .metrics import (
     TrainingHistory,
     compute_accuracy,
@@ -10,7 +11,6 @@ from .convergence import (
     compute_convergence_metrics,
     aggregate_metrics,
     compute_all_metrics,
-    compute_global_L_star,
     compute_global_initial_loss,
     compute_target_loss,
     suboptimality_gap,
@@ -30,7 +30,6 @@ __all__ = [
     "compute_convergence_metrics",
     "aggregate_metrics",
     "compute_all_metrics",
-    "compute_global_L_star",
     "compute_global_initial_loss",
     "compute_target_loss",
     "suboptimality_gap",

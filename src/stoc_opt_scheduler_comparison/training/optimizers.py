@@ -1,6 +1,7 @@
 """
 Optimizers - get_optimizer() factory for SGD and Adam.
 """
+
 from __future__ import annotations
 
 import torch.nn as nn
@@ -20,4 +21,4 @@ def get_optimizer(model: nn.Module, name: str, lr: float, **kwargs) -> optim.Opt
         raise ValueError(f"Unknown optimizer: '{name}'. Available: {available}")
 
     optimizer_cls = _OPTIMIZER_REGISTRY[name]
-    return optimizer_cls(model.parameters(), lr=lr, **kwargs) # type: ignore
+    return optimizer_cls(model.parameters(), lr=lr, **kwargs)  # type: ignore

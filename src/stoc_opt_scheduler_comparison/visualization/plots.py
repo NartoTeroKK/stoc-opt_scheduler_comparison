@@ -10,6 +10,7 @@ Data sources:
 - results: {run_name: {"history": TrainingHistory, "test_metrics": dict}}
 - aggregated: {key: {"train_losses_mean": array, "train_losses_std": array, ...}}
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -21,20 +22,20 @@ import pandas as pd
 import seaborn as sns
 from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
+from matplotlib.ticker import MultipleLocator
 
 from stoc_opt_scheduler_comparison.utils import viz_logger as logger
 from stoc_opt_scheduler_comparison.evaluation.convergence import (
-    compute_global_initial_loss,
     compute_target_loss,
 )
 
 # ── Visual Encoding ─────────────────────────────────────────────────────────
 
 SCHEDULER_COLORS: dict[str, str] = {
-    "none": "#7f7f7f",    # Gray - neutral baseline
+    "none": "#7f7f7f",  # Gray - neutral baseline
     "exponential": "#1f77b4",  # Blue - monotonic decay
-    "cosine": "#2ca02c",    # Green - smooth cyclic
-    "cyclic": "#ff7f0e",    # Orange - oscillating
+    "cosine": "#2ca02c",  # Green - smooth cyclic
+    "cyclic": "#ff7f0e",  # Orange - oscillating
     "one-cycle": "#d62728",  # Red - aggressive warm-up
 }
 
@@ -54,13 +55,15 @@ OPTIMIZERS_LIST = ["sgd", "adam"]
 # E_target threshold line style (level 1: 5 %)
 E_TARGET_COLOR: str = "#bf75f0"
 E_TARGET_LINESTYLE: str = "-."
-E_TARGET_LABEL: str = "E_target (lv1, 5 %)"
+E_TARGET_LABEL: str = "L_target"
 
 # ── Helpers ────────────────────────────────────────────────────────────────
+
 
 def _parse_run_name(name: str) -> tuple[str, str, str, int] | None:
     """Parse 'convex_cosine_sgd_42' → (problem, scheduler, optimizer, seed)."""
     import re
+
     match = re.match(r"(convex|non-convex)_([^_]+)_([^_]+)_(\d+)$", name)
     if match:
         return match.group(1), match.group(2), match.group(3), int(match.group(4))
@@ -72,33 +75,39 @@ def _get_scheduler_color(scheduler: str) -> str:
 
 
 def _get_optimizer_style(optimizer: str) -> dict[str, Any]:
-    return OPTIMIZER_STYLES.get(optimizer, {"linestyle": "-", "linewidth": 2.0, "alpha_std": 0.15})
+    return OPTIMIZER_STYLES.get(
+        optimizer, {"linestyle": "-", "linewidth": 2.0, "alpha_std": 0.15}
+    )
 
 
 def _setup_style() -> None:
     """Apply clean academic style."""
     sns.set_theme(style="whitegrid")
-    plt.rcParams.update({
-        "font.family": "sans-serif",
-        "font.size": 11,
-        "axes.labelsize": 12,
-        "axes.titlesize": 14,
-        "xtick.labelsize": 10,
-        "ytick.labelsize": 10,
-        "legend.fontsize": 8,
-        "figure.titlesize": 18,
-        "axes.spines.top": False,
-        "axes.spines.right": False,
-    })
+    plt.rcParams.update(
+        {
+            "font.family": "sans-serif",
+            "font.size": 11,
+            "axes.labelsize": 14,
+            "axes.titlesize": 16,
+            "xtick.labelsize": 10,
+            "ytick.labelsize": 10,
+            "legend.fontsize": 10,
+            "figure.titlesize": 18,
+            "axes.spines.top": False,
+            "axes.spines.right": False,
+        }
+    )
 
 
 def _save(fig: Figure, path: str | Path) -> None:
     """Save figure and log."""
-    fig.savefig(str(path), dpi=150, bbox_inches="tight")
+    fig.savefig(str(path), dpi=500, bbox_inches="tight")
     logger.info(f"Saved: {path}")
 
 
-def _get_aggregated_arrays(aggregated: dict, key: str) -> tuple[np.ndarray, np.ndarray] | tuple[None, None]:
+def _get_aggregated_arrays(
+    aggregated: dict, key: str
+) -> tuple[np.ndarray, np.ndarray] | tuple[None, None]:
     """Extract mean and std arrays for a scheduler-optimizer pair."""
     if key not in aggregated:
         return None, None
@@ -123,43 +132,9 @@ def _get_seed_arrays(results: dict, scheduler: str, optimizer: str) -> list[np.n
                 arrays.append(history.train_losses_arr)
     return arrays
 
-def add_figure_title(
-    fig: Figure,
-    title: str,
-    subtitle: str | None = None,
-    title_fontsize: int = 18,
-    subtitle_fontsize: int = 12,
-    gap_inches: float = 0.28,
-) -> None:
-    fig_height = fig.get_size_inches()[1]
-
-    # Stima altezza testo in inches: fontsize punti → 1 punto ≈ 1/72 inch
-    title_height    = title_fontsize    / 72
-    subtitle_height = subtitle_fontsize / 72 if subtitle else 0.0
-
-    # Spazio totale necessario = margine superiore + titolo + gap + sottotitolo + piccolo padding
-    top_margin_inches = 0.10 + title_height + gap_inches + subtitle_height + 0.05
-
-    title_y    = 1.0 - (0.10 / fig_height)
-    subtitle_y = title_y - ((title_height + gap_inches) / fig_height)
-    top_margin = 1.0 - (top_margin_inches / fig_height)
-
-    fig.suptitle(title, fontsize=title_fontsize, y=title_y)
-
-    if subtitle is not None:
-        fig.text(
-            0.5, subtitle_y,
-            subtitle,
-            ha="center",
-            fontsize=subtitle_fontsize,
-            style="italic",
-            color="gray",
-            transform=fig.transFigure,
-        )
-
-    fig.tight_layout(rect=(0, 0, 1, top_margin))
 
 # ── Level 1: Global Comparison ─────────────────────────────────────────
+
 
 def plot_global_comparison(
     results: dict,
@@ -180,7 +155,7 @@ def plot_global_comparison(
     """
     _setup_style()
 
-    fig, axes = plt.subplots(3, 1, figsize=(12, 18), dpi=150)
+    fig, axes = plt.subplots(3, 1, figsize=(10, 18))
 
     # Pre-calcolo del valore di soglia E_target
     l_target: float | None = None
@@ -208,14 +183,23 @@ def plot_global_comparison(
         style = _get_optimizer_style(opt)
         epochs = np.arange(1, len(mean_arr) + 1)
 
-        ax0.plot(epochs, mean_arr, color=color, label=f"{sched} ({opt})",
-                linestyle=style["linestyle"], linewidth=style["linewidth"])
-        
+        ax0.plot(
+            epochs,
+            mean_arr,
+            color=color,
+            label=f"{sched} ({opt})",
+            linestyle=style["linestyle"],
+            linewidth=style["linewidth"],
+        )
+
     # Single E_target threshold line (level 1)
     if l_target is not None:
         ax0.axhline(
-            y=l_target, color=E_TARGET_COLOR,
-            linestyle=E_TARGET_LINESTYLE, linewidth=1, alpha=0.75,
+            y=l_target,
+            color=E_TARGET_COLOR,
+            linestyle=E_TARGET_LINESTYLE,
+            linewidth=1,
+            alpha=0.75,
             label=E_TARGET_LABEL,
         )
 
@@ -236,14 +220,23 @@ def plot_global_comparison(
         style = _get_optimizer_style(opt)
         epochs = np.arange(1, len(mean_arr) + 1)
 
-        ax1.plot(epochs, mean_arr, color=color, label=f"{sched} ({opt})",
-                linestyle=style["linestyle"], linewidth=style["linewidth"])
+        ax1.plot(
+            epochs,
+            mean_arr,
+            color=color,
+            label=f"{sched} ({opt})",
+            linestyle=style["linestyle"],
+            linewidth=style["linewidth"],
+        )
 
     # Single E_target threshold line (level 1)
     if l_target is not None:
         ax1.axhline(
-            y=l_target, color=E_TARGET_COLOR,
-            linestyle=E_TARGET_LINESTYLE, linewidth=1, alpha=0.75,
+            y=l_target,
+            color=E_TARGET_COLOR,
+            linestyle=E_TARGET_LINESTYLE,
+            linewidth=1,
+            alpha=0.75,
             label=E_TARGET_LABEL,
         )
 
@@ -267,9 +260,14 @@ def plot_global_comparison(
         style = _get_optimizer_style(opt)
         epochs = np.arange(1, len(lr_mean) + 1)
 
-        ax2.plot(epochs, lr_mean, color=color,
-                linestyle=style["linestyle"], linewidth=style["linewidth"],
-                label=f"{sched} ({opt})")
+        ax2.plot(
+            epochs,
+            lr_mean,
+            color=color,
+            linestyle=style["linestyle"],
+            linewidth=style["linewidth"],
+            label=f"{sched} ({opt})",
+        )
 
     ax2.set_xlabel("Epoch")
     ax2.set_ylabel("Learning Rate")
@@ -290,15 +288,16 @@ def plot_global_comparison(
             max_epochs = max(max_epochs, len(lr_mean))
     for ax in axes:
         ax.set_xlim(0, max_epochs)
+        ax.xaxis.set_major_locator(MultipleLocator(10))
 
     # ── Layout and Title ──
     fig.tight_layout(rect=(0, 0.03, 1, 0.95))
 
-    add_figure_title(
-        fig,
-        title=f"{problem_type.upper()} - Global Comparison",
-        subtitle=f"Top: Loss (Linear) | Middle: Loss (Log) | Bottom: LR Schedules (Log)",
-    )
+    # add_figure_title(
+    #     fig,
+    #     title=f"{problem_type.upper()} - Global Comparison",
+    #     subtitle=f"Top: Loss (Linear) | Middle: Loss (Log) | Bottom: LR Schedules (Log)",
+    # )
 
     if save_path:
         _save(fig, save_path)
@@ -306,7 +305,9 @@ def plot_global_comparison(
         plt.show()
     return fig
 
+
 # ── Level 2: By Optimizer ────────────────────────────────────────────────
+
 
 def plot_by_optimizer(
     results: dict,
@@ -329,7 +330,7 @@ def plot_by_optimizer(
     the computed L_target.
     """
     _setup_style()
-    fig, axes = plt.subplots(2, 2, figsize=(16, 12), dpi=150)
+    fig, axes = plt.subplots(2, 2, figsize=(16, 12))
     axes = axes.flatten()
 
     # Pre-compute E_target threshold value
@@ -349,16 +350,30 @@ def plot_by_optimizer(
             style = _get_optimizer_style(opt)
             epochs = np.arange(1, len(mean_arr) + 1)
 
-            ax_linear.plot(epochs, mean_arr, color=color, label=sched,
-                          linestyle=style["linestyle"], linewidth=style["linewidth"])
-            ax_linear.fill_between(epochs, mean_arr - std_arr, mean_arr + std_arr,
-                                   color=color, alpha=style["alpha_std"])
+            ax_linear.plot(
+                epochs,
+                mean_arr,
+                color=color,
+                label=sched,
+                linestyle=style["linestyle"],
+                linewidth=style["linewidth"],
+            )
+            ax_linear.fill_between(
+                epochs,
+                mean_arr - std_arr,
+                mean_arr + std_arr,
+                color=color,
+                alpha=style["alpha_std"],
+            )
 
         # E_target threshold line on linear subplot
         if l_target is not None:
             ax_linear.axhline(
-                y=l_target, color=E_TARGET_COLOR,
-                linestyle=E_TARGET_LINESTYLE, linewidth=1.0, alpha=0.7,
+                y=l_target,
+                color=E_TARGET_COLOR,
+                linestyle=E_TARGET_LINESTYLE,
+                linewidth=1.0,
+                alpha=0.7,
                 label=E_TARGET_LABEL if idx == 0 else "",
             )
         if idx == 0 and l_target is not None:
@@ -380,16 +395,30 @@ def plot_by_optimizer(
             style = _get_optimizer_style(opt)
             epochs = np.arange(1, len(mean_arr) + 1)
 
-            ax_log.plot(epochs, mean_arr, color=color, label=sched,
-                        linestyle=style["linestyle"], linewidth=style["linewidth"])
-            ax_log.fill_between(epochs, mean_arr - std_arr, mean_arr + std_arr,
-                                   color=color, alpha=style["alpha_std"])
+            ax_log.plot(
+                epochs,
+                mean_arr,
+                color=color,
+                label=sched,
+                linestyle=style["linestyle"],
+                linewidth=style["linewidth"],
+            )
+            ax_log.fill_between(
+                epochs,
+                mean_arr - std_arr,
+                mean_arr + std_arr,
+                color=color,
+                alpha=style["alpha_std"],
+            )
 
         # E_target threshold line on log subplot
         if l_target is not None:
             ax_log.axhline(
-                y=l_target, color=E_TARGET_COLOR,
-                linestyle=E_TARGET_LINESTYLE, linewidth=1.0, alpha=0.7,
+                y=l_target,
+                color=E_TARGET_COLOR,
+                linestyle=E_TARGET_LINESTYLE,
+                linewidth=1.0,
+                alpha=0.7,
             )
 
         ax_log.set_xlabel("Epoch")
@@ -408,12 +437,13 @@ def plot_by_optimizer(
                 max_epochs = max(max_epochs, len(mean_arr))
     for ax in axes:
         ax.set_xlim(0, max_epochs)
+        ax.xaxis.set_major_locator(MultipleLocator(10))
 
-    add_figure_title(
-        fig,
-        title=f"{problem_type.upper()} - Loss Curves by Optimizer",
-        subtitle=f"Left: Linear scale | Right: Log scale | Dashed lines = E_target thresholds",
-    )        
+    # add_figure_title(
+    #     fig,
+    #     title="", #f"{problem_type.upper()} - Loss Curves by Optimizer",
+    #     subtitle=f"Left: Linear scale | Right: Log scale | Dashed lines = E_target thresholds",
+    # )
 
     if save_path:
         _save(fig, save_path)
@@ -424,10 +454,11 @@ def plot_by_optimizer(
 
 # ── Level 3: Seed Variance ────────────────────────────────────────────────
 
+
 def plot_seed_variance(
     results: dict,
     problem_type: str,
-    L_star_global: float | None = None, 
+    L_star_global: float | None = None,
     L0: float | None = None,
     e_target_epsilon: float | None = 0.05,
     save_path: str | Path | None = None,
@@ -442,7 +473,7 @@ def plot_seed_variance(
     """
     _setup_style()
 
-    fig, axes = plt.subplots(5, 2, figsize=(12, 20), sharex=True, sharey=False, dpi=150)
+    fig, axes = plt.subplots(5, 2, figsize=(14, 20), sharex=True, sharey=True)
     axes = axes.flatten() if hasattr(axes, "flatten") else axes.ravel()
 
     # Pre-compute global E_target threshold value
@@ -457,24 +488,26 @@ def plot_seed_variance(
     ):
         ax = axes[idx]
         color = _get_scheduler_color(sched)
-        style = _get_optimizer_style(opt)
+        # style = _get_optimizer_style(opt)
 
         seed_arrays = _get_seed_arrays(results, sched, opt)
 
         if seed_arrays:
             for arr in seed_arrays:
                 ax.plot(
-                    np.arange(1, len(arr) + 1), arr,
+                    np.arange(1, len(arr) + 1),
+                    arr,
                     color=color,
                     linewidth=SEED_STYLE["individual"]["linewidth"],
                     alpha=SEED_STYLE["individual"]["alpha"],
                 )
                 all_loss_values.extend(arr.tolist())
 
-            stacked  = np.stack(seed_arrays)
+            stacked = np.stack(seed_arrays)
             mean_arr = stacked.mean(axis=0)
             ax.plot(
-                np.arange(1, len(mean_arr) + 1), mean_arr,
+                np.arange(1, len(mean_arr) + 1),
+                mean_arr,
                 color=color,
                 linewidth=SEED_STYLE["mean"]["linewidth"],
                 alpha=SEED_STYLE["mean"]["alpha"],
@@ -483,20 +516,24 @@ def plot_seed_variance(
             # --- Global E_target threshold line ---
             if l_target is not None:
                 ax.axhline(
-                    y=l_target, color=E_TARGET_COLOR,
-                    linestyle=E_TARGET_LINESTYLE, linewidth=0.8, alpha=0.6,
+                    y=l_target,
+                    color=E_TARGET_COLOR,
+                    linestyle=E_TARGET_LINESTYLE,
+                    linewidth=0.8,
+                    alpha=0.6,
                 )
 
-        ax.set_title(f"{sched} ({opt})", fontsize=11)
+        ax.set_title(f"{opt} - {sched}", fontsize=16)
         ax.grid(True, alpha=0.3)
         if idx % 2 == 0:
             ax.set_ylabel("Training Loss")
 
-    y_max = np.percentile(all_loss_values, 95) * 1.05
-    y_min = max(0.0, np.percentile(all_loss_values, 1) * 0.95)
+    # y_max = np.percentile(all_loss_values, 95) * 1.05
+    # y_min = max(0.0, np.percentile(all_loss_values, 1) * 0.95)
 
     for ax in axes:
-        ax.set_ylim(y_min, y_max)
+        #     ax.set_ylim(y_min, y_max)
+        ax.set_yscale("log")
 
     # ── Enforce strict x-axis from 0 to max epochs ──
     max_epochs = 0
@@ -506,23 +543,27 @@ def plot_seed_variance(
             max_epochs = max(max_epochs, max(len(arr) for arr in seed_arrays))
     for ax in axes:
         ax.set_xlim(0, max_epochs)
+        ax.xaxis.set_major_locator(MultipleLocator(10))
 
     # Build subtitle with E_target info
-    subtitle = "Each subplot: 10 thin seed lines + 1 thick mean line | dashed = per-cell threshold"
+    # subtitle = "LOG SCALE subplot: 10 thin seed lines + 1 thick mean line | dashed = L_target"
 
-    add_figure_title(
-        fig,
-        title=f"{problem_type.upper()} - Seed Variance Analysis",
-        subtitle=subtitle,
-    )
+    # add_figure_title(
+    #     fig,
+    #     title= "", #f"{problem_type.upper()} - Seed Variance Analysis",
+    #     subtitle=subtitle,
+    # )
 
+    fig.subplots_adjust(wspace=0.05, hspace=0.25)
     if save_path:
         _save(fig, save_path)
     if show:
         plt.show()
     return fig
 
+
 # ── Convergence Boxplot (Epochs-to-Target) ─────────────────────────────
+
 
 def plot_convergence_boxplot(
     data: dict | pd.DataFrame,
@@ -537,10 +578,10 @@ def plot_convergence_boxplot(
     """
     Boxplot raggruppato (Hue=Optimizer, X=Scheduler) che accetta sia Dict che DataFrame.
     Calcola la statistica del boxplot SOLO sulle run convergenti.
-    I Timeout sono tracciati manualmente con offset precisi per mantenere 
+    I Timeout sono tracciati manualmente con offset precisi per mantenere
     il layout intatto anche quando intere categorie falliscono.
     """
-    fig, ax = plt.subplots(1, 1, figsize=(14, 7), dpi=150)
+    fig, ax = plt.subplots(1, 1, figsize=(14, 7))
     opt_palette = {"ADAM": "#2b83ba", "SGD": "#d7191c"}
 
     # =========================================================================
@@ -556,31 +597,50 @@ def plot_convergence_boxplot(
             for key, val in data.items():
                 opt = str(val.get("optimizer", "unknown")).upper()
                 sched = str(val.get("scheduler", "unknown"))
-                
+
                 # Cerca l'array dei valori raw per tracciare tutti i seed nel boxplot.
                 # Assumiamo che i valori grezzi si chiamino "EtT_values", "EtT_runs" o simili.
-                raw_ett = val.get("EtT_values", val.get("EtT_runs", val.get("Epochs_to_Target", [])))
-                
-                if isinstance(raw_ett, (list, np.ndarray, pd.Series)) and len(raw_ett) > 0:
+                raw_ett = val.get(
+                    "EtT_values", val.get("EtT_runs", val.get("Epochs_to_Target", []))
+                )
+
+                if (
+                    isinstance(raw_ett, (list, np.ndarray, pd.Series))
+                    and len(raw_ett) > 0
+                ):
                     for ett in raw_ett:
-                        rows.append({"Optimizer": opt, "Scheduler": sched, "Epochs_to_Target": ett})
+                        rows.append(
+                            {
+                                "Optimizer": opt,
+                                "Scheduler": sched,
+                                "Epochs_to_Target": ett,
+                            }
+                        )
                 else:
-                    # Fallback di sicurezza: se per caso gli passi i dati aggregati SENZA 
+                    # Fallback di sicurezza: se per caso gli passi i dati aggregati SENZA
                     # gli array raw, usa la media. (N.B. Il boxplot diventerà un punto singolo)
                     fallback_val = val.get("EtT_mean", val.get("EtT", np.nan))
-                    rows.append({"Optimizer": opt, "Scheduler": sched, "Epochs_to_Target": fallback_val})
-                    
+                    rows.append(
+                        {
+                            "Optimizer": opt,
+                            "Scheduler": sched,
+                            "Epochs_to_Target": fallback_val,
+                        }
+                    )
+
             df_convergence = pd.DataFrame(rows)
     else:
         df_convergence = data.copy()
 
     # Normalizza i nomi delle colonne per sicurezza (nel caso in cui passi un df con nomi minuscoli)
-    df_convergence = df_convergence.rename(columns={
-        "optimizer": "Optimizer", 
-        "scheduler": "Scheduler",
-        "EtT": "Epochs_to_Target",
-        "EtT_values": "Epochs_to_Target"
-    })
+    df_convergence = df_convergence.rename(
+        columns={
+            "optimizer": "Optimizer",
+            "scheduler": "Scheduler",
+            "EtT": "Epochs_to_Target",
+            "EtT_values": "Epochs_to_Target",
+        }
+    )
     df_convergence["Optimizer"] = df_convergence["Optimizer"].astype(str).str.upper()
 
     # =========================================================================
@@ -588,18 +648,24 @@ def plot_convergence_boxplot(
     # =========================================================================
     sched_order = df_convergence["Scheduler"].unique()
     opt_order = ["ADAM", "SGD"]
-    
-    df_convergence["Scheduler"] = pd.Categorical(df_convergence["Scheduler"], categories=sched_order, ordered=True)
-    df_convergence["Optimizer"] = pd.Categorical(df_convergence["Optimizer"], categories=opt_order, ordered=True)
+
+    df_convergence["Scheduler"] = pd.Categorical(
+        df_convergence["Scheduler"], categories=sched_order, ordered=True
+    )
+    df_convergence["Optimizer"] = pd.Categorical(
+        df_convergence["Optimizer"], categories=opt_order, ordered=True
+    )
 
     # =========================================================================
     # 2. Separazione Dati IBRIDA
     # =========================================================================
-    is_timeout = (df_convergence["Epochs_to_Target"] >= max_epochs) | (df_convergence["Epochs_to_Target"].isna())
-    
+    is_timeout = (df_convergence["Epochs_to_Target"] >= max_epochs) | (
+        df_convergence["Epochs_to_Target"].isna()
+    )
+
     df_converged = df_convergence.copy()
     df_converged.loc[is_timeout, "Epochs_to_Target"] = np.nan
-    
+
     df_timeout = df_convergence[is_timeout].copy()
 
     # Pre-calcolo del valore di soglia E_target
@@ -619,6 +685,7 @@ def plot_convergence_boxplot(
         palette=opt_palette,
         width=0.6,
         linewidth=1.5,
+        whis=(0, 100),
         showfliers=False,
         ax=ax,
     )
@@ -648,20 +715,21 @@ def plot_convergence_boxplot(
         for _, row in df_timeout.iterrows():
             sched = row["Scheduler"]
             opt = row["Optimizer"]
-            
+
             base_x = x_map[sched]
             offset = offset_map[opt]
-            
-            jitter = np.random.uniform(-0.05, 0.05) 
+
+            jitter = np.random.uniform(-0.05, 0.05)
             final_x = base_x + offset + jitter
-            
+
             ax.plot(
-                final_x, max_epochs,
+                final_x,
+                max_epochs,
                 marker="X",
-                color=opt_palette[opt], 
+                color=opt_palette[opt],
                 markersize=7,
                 alpha=0.9,
-                linestyle='None'
+                linestyle="None",
             )
 
     # =========================================================================
@@ -673,40 +741,48 @@ def plot_convergence_boxplot(
 
     if not df_timeout.empty:
         timeout_handle = Line2D(
-            [0], [0], marker='X', color='w', 
-            markerfacecolor='gray', markersize=8
+            [0], [0], marker="X", color="w", markerfacecolor="gray", markersize=8
         )
         unique_handles.append(timeout_handle)
-        unique_labels.append('Timeout (Non Converso)')
+        unique_labels.append("Timeout")
 
     ax.legend(
-        unique_handles, unique_labels, 
-        title="Legenda", loc='upper center', 
-        bbox_to_anchor=(0.5, -0.15), ncol=3, frameon=False
+        unique_handles,
+        unique_labels,
+        title="Legenda",
+        loc="lower center",
+        bbox_to_anchor=(0.5, 1.01),
+        ncol=3,
+        frameon=False,
     )
 
-    ax.set_title(
-        f"{problem_type.upper()} - Convergence Velocity (Time-to-Target)",
-        fontsize=16, fontweight='bold', pad=20,
-    )
+    # ax.set_title(
+    #     f"{problem_type.upper()} - Convergence Speed (Epochs-to-Target)",
+    #     fontsize=16, fontweight='bold', pad=50,
+    # )
     ax.set_xlabel("Learning Rate Scheduler", fontsize=14, labelpad=15)
-    ax.set_ylabel(f"Epochs to Reach Target ({L_target:.4f})", fontsize=14, labelpad=15)
-    ax.tick_params(axis='x', rotation=0, labelsize=12)
-    
-    ax.set_ylim(-2, max_epochs + 5)
-    ax.axhline(y=max_epochs, color='gray', linestyle='--', alpha=0.5, linewidth=1.5, zorder=0)
+    ax.set_ylabel(f"Epochs to Target ({L_target:.4f})", fontsize=14, labelpad=15)
+    ax.tick_params(axis="x", rotation=0, labelsize=12)
+
+    ax.set_ylim(0, max_epochs + 1)
+    ax.yaxis.set_major_locator(MultipleLocator(10))
+    ax.axhline(
+        y=max_epochs, color="gray", linestyle="--", alpha=0.5, linewidth=1.5, zorder=0
+    )
     ax.grid(True, alpha=0.3, axis="y")
     fig.tight_layout()
 
     if save_path:
-        plt.savefig(save_path, bbox_inches='tight', dpi=300)
+        _save(fig, save_path)
     if show:
         plt.show()
-        
+
     plt.close(fig)
     return fig
 
+
 # ── Level 4: Final Performance ──────────────────────────────────────────
+
 
 def plot_final_performance(
     aggregated: dict,
@@ -724,23 +800,43 @@ def plot_final_performance(
     configs = [
         f"{opt}_{sched}"
         for opt in ["sgd", "adam"]  # Assicurati di usare OPTIMIZERS_LIST
-        for sched in ["none", "exponential", "cosine", "cyclic", "one-cycle"] # SCHEDULERS_LIST
+        for sched in [
+            "none",
+            "exponential",
+            "cosine",
+            "cyclic",
+            "one-cycle",
+        ]  # SCHEDULERS_LIST
         if f"{opt}_{sched}" in aggregated
     ]
-    
+
     if not configs:
         logger.warning("No data for final performance plot")
         return plt.gcf()
 
     # 1. Estrazione dati vettorializzata
     metrics = {
-        "loss": {"last": [], "min_max": [], "test": [], "last_std": [], "min_max_std": [], "test_std": []},
-        "acc":  {"last": [], "min_max": [], "test": [], "last_std": [], "min_max_std": [], "test_std": []}
+        "loss": {
+            "last": [],
+            "min_max": [],
+            "test": [],
+            "last_std": [],
+            "min_max_std": [],
+            "test_std": [],
+        },
+        "acc": {
+            "last": [],
+            "min_max": [],
+            "test": [],
+            "last_std": [],
+            "min_max_std": [],
+            "test_std": [],
+        },
     }
 
     for c in configs:
         agg = aggregated[c]
-        
+
         tl = agg.get("train_losses_mean", np.array([0.0]))
         tl_std = agg.get("train_losses_std", np.array([0.0]))
         ta = agg.get("train_accuracies_mean", np.array([0.0]))
@@ -766,111 +862,148 @@ def plot_final_performance(
 
     for category in metrics:
         for key in metrics[category]:
-            metrics[category][key] = np.array(metrics[category][key]) # type: ignore
+            metrics[category][key] = np.array(metrics[category][key])  # type: ignore
 
     # Altezza leggermente ridotta rispetto al figsize enorme dell'inset
-    fig, axes = plt.subplots(2, 1, figsize=(16, 12), dpi=150) 
-    
+    fig, axes = plt.subplots(2, 1, figsize=(16, 12))
+
     x = np.arange(len(configs))
     # Ridotto l'offset per raggruppare i 3 punti più stretti attorno all'etichetta
-    offset_w = 0.15 
-    
+    offset_w = 0.15
+
     # Stile globale degli error bar
-    err_kw = dict(capsize=4, capthick=1.5, elinewidth=1, ls='none')
+    err_kw = dict(capsize=4, capthick=1.5, elinewidth=1, ls="none")
 
     plot_structure = [
         {
-            "ax_idx": 0, "title": "Train vs Test Loss", "ylabel": "Loss",
-            "data": metrics["loss"], "labels": ["Train Loss (last)", "Train Loss (min)", "Test Loss"]
+            "ax_idx": 0,
+            "title": "Train vs Test Loss",
+            "ylabel": "Loss",
+            "data": metrics["loss"],
+            "labels": ["Train Loss (last)", "Train Loss (min)", "Test Loss"],
         },
         {
-            "ax_idx": 1, "title": "Train vs Test Accuracy", "ylabel": "Accuracy",
-            "data": metrics["acc"], "labels": ["Train Accuracy (last)", "Train Accuracy (max)", "Test Accuracy"]
-        }
+            "ax_idx": 1,
+            "title": "Train vs Test Accuracy",
+            "ylabel": "Accuracy",
+            "data": metrics["acc"],
+            "labels": [
+                "Train Accuracy (last)",
+                "Train Accuracy (max)",
+                "Test Accuracy",
+            ],
+        },
     ]
 
     # Stile per i punti: usiamo marker diversi per differenziare a colpo d'occhio
     # Cerchio per Last, Triangolo su per Min/Max, Quadrato per Test
     styles = [
-        {"color": "#4C72B0", "err_color": "#1a3a6b", "marker": "o", "offset": -offset_w}, # Last (Blu)
-        {"color": "#55A868", "err_color": "#1f5c30", "marker": "^", "offset": 0},         # Min/Max (Verde)
-        {"color": "#C44E52", "err_color": "#7a1a1d", "marker": "s", "offset": offset_w}   # Test (Rosso)
+        {
+            "color": "#4C72B0",
+            "err_color": "#1a3a6b",
+            "marker": "o",
+            "offset": -offset_w,
+        },  # Last (Blu)
+        {
+            "color": "#55A868",
+            "err_color": "#1f5c30",
+            "marker": "^",
+            "offset": 0,
+        },  # Min/Max (Verde)
+        {
+            "color": "#C44E52",
+            "err_color": "#7a1a1d",
+            "marker": "s",
+            "offset": offset_w,
+        },  # Test (Rosso)
     ]
 
     for struct in plot_structure:
         ax = axes[struct["ax_idx"]]
         d = struct["data"]
         categories = ["last", "min_max", "test"]
-        
+
         # Plot dei Dot con Error Bars
         for i, cat in enumerate(categories):
             means = d[cat]
             stds = d[f"{cat}_std"]
             s = styles[i]
-            
+
             # Disegniamo punto e barra usando 'ecolor' per assegnare il colore alla barra di errore
             ax.errorbar(
-                x + s["offset"], means, yerr=stds, 
-                fmt=s["marker"], color=s["color"], ecolor=s["err_color"], label=struct["labels"][i], 
-                markersize=9, alpha=0.9, **err_kw
+                x + s["offset"],
+                means,
+                yerr=stds,
+                fmt=s["marker"],
+                color=s["color"],
+                ecolor=s["err_color"],
+                label=struct["labels"][i],
+                markersize=9,
+                alpha=0.9,
+                **err_kw,
             )
 
         # 2. CALCOLO DINAMICO ASSE Y (Ora perfettamente legittimo per il Dot Plot)
         all_mins = np.concatenate([d[cat] - d[f"{cat}_std"] for cat in categories])
         all_maxs = np.concatenate([d[cat] + d[f"{cat}_std"] for cat in categories])
-        
+
         global_min = np.nanmin(all_mins)
         global_max = np.nanmax(all_maxs)
         value_span = global_max - global_min
-        
+
         # Margine del 5% per non toccare i bordi superiore e inferiore
-        margin = max(value_span * 0.05, 0.01) # Minimo 1% di margine se la varianza è zero
-        
+        margin = max(
+            value_span * 0.05, 0.01
+        )  # Minimo 1% di margine se la varianza è zero
+
         if struct["ylabel"] == "Accuracy":
             # Per l'accuratezza tagliamo liberamente sotto, con tetto rigido a 1.01
             y_bottom = max(0.0, global_min - margin)
-            y_top = min(1.01, global_max + margin) # Permettiamo di sforare leggermente 1.0 se l'errore lo tocca
+            y_top = min(
+                1.01, global_max + margin
+            )  # Permettiamo di sforare leggermente 1.0 se l'errore lo tocca
             ax.set_ylim(y_bottom, y_top)
-            
+
             # Evidenziamo visivamente la linea del 100%
-            ax.axhline(1.0, color='gray', linestyle='--', alpha=0.3, zorder=0)
+            ax.axhline(1.0, color="gray", linestyle="--", alpha=0.3, zorder=0)
         else:
             # Per la loss, il minimo matematico è 0.0
             y_bottom = max(0.0, global_min - margin)
             ax.set_ylim(y_bottom, global_max + margin)
-            
+
             # Linea dello zero per riferimento visivo
-            ax.axhline(0.0, color='gray', linestyle='--', alpha=0.3, zorder=0)
+            ax.axhline(0.0, color="gray", linestyle="--", alpha=0.3, zorder=0)
 
         # Pulizia e formattazione dell'asse X
         ax.set_ylabel(struct["ylabel"])
         ax.set_title(f"{problem_type.upper()} - {struct['title']}")
         ax.set_xticks(x)
         ax.set_xticklabels(configs, rotation=45, ha="right")
-        
+
         # Aggiungiamo gridlines verticali leggere per separare visivamente le configurazioni
         for tick in x[:-1]:
-            ax.axvline(tick + 0.5, color='gray', alpha=0.15, linestyle='-')
-            
-        ax.legend(loc="best", frameon=True, edgecolor='white')
+            ax.axvline(tick + 0.5, color="gray", alpha=0.15, linestyle="-")
+
+        ax.legend(loc="best", frameon=True, edgecolor="white")
         ax.grid(True, alpha=0.3, axis="y")
 
-    add_figure_title(
-       fig,
-       title=f"{problem_type.upper()} - Final Performance Comparison",
-       subtitle="Loss (top): last/min train + test | Accuracy (bottom): last/max train + test | Error bars = ±std across seeds"
-    )
+    # add_figure_title(
+    #    fig,
+    #    title=f"{problem_type.upper()} - Final Performance Comparison",
+    #    subtitle="Loss (top): last/min train + test | Accuracy (bottom): last/max train + test | Error bars = ±std across seeds"
+    # )
     # Aggiungi il layout dinamico
     fig.tight_layout(rect=(0.0, 0.03, 1.0, 0.95))
-    
+
     if save_path:
-        plt.savefig(save_path, bbox_inches='tight', dpi=150)
+        _save(fig, save_path)
     if show:
         plt.show()
     return fig
 
 
 # ── Analytical Plot A: Loss + LR Dual Axis ─────────────────────
+
 
 def plot_loss_lr_dual(
     results: dict,
@@ -888,10 +1021,12 @@ def plot_loss_lr_dual(
     """
     _setup_style()
 
-    fig, axes = plt.subplots(5, 2, figsize=(12, 20), sharex=True, dpi=150)
+    fig, axes = plt.subplots(5, 2, figsize=(12, 20), sharex=True)
     axes = axes.flatten() if hasattr(axes, "flatten") else axes.ravel()
 
-    for idx, (opt, sched) in enumerate([(o, s) for s in SCHEDULERS_LIST for o in OPTIMIZERS_LIST]):
+    for idx, (opt, sched) in enumerate(
+        [(o, s) for s in SCHEDULERS_LIST for o in OPTIMIZERS_LIST]
+    ):
         ax = axes[idx]
         key = f"{opt}_{sched}"
 
@@ -902,11 +1037,21 @@ def plot_loss_lr_dual(
             style = _get_optimizer_style(opt)
             epochs = np.arange(1, len(mean_arr) + 1)
 
-            ax.plot(epochs, mean_arr, color=color,
-                   linestyle=style["linestyle"], linewidth=style["linewidth"],
-                   label="Loss")
-            ax.fill_between(epochs, mean_arr - std_arr, mean_arr + std_arr,
-                           color=color, alpha=style["alpha_std"])
+            ax.plot(
+                epochs,
+                mean_arr,
+                color=color,
+                linestyle=style["linestyle"],
+                linewidth=style["linewidth"],
+                label="Loss",
+            )
+            ax.fill_between(
+                epochs,
+                mean_arr - std_arr,
+                mean_arr + std_arr,
+                color=color,
+                alpha=style["alpha_std"],
+            )
             ax.set_ylabel("Training Loss", color=color)
             ax.tick_params(axis="y", labelcolor=color)
 
@@ -916,8 +1061,14 @@ def plot_loss_lr_dual(
         lr_color = "#9467bd"
         if lr_mean is not None:
             ax2 = ax.twinx()
-            ax2.plot(np.arange(1, len(lr_mean) + 1), lr_mean,
-                    color=lr_color, linestyle=":", linewidth=1.0, label="LR")
+            ax2.plot(
+                np.arange(1, len(lr_mean) + 1),
+                lr_mean,
+                color=lr_color,
+                linestyle=":",
+                linewidth=1.0,
+                label="LR",
+            )
             ax2.set_ylabel("Learning Rate", color=lr_color)
             ax2.tick_params(axis="y", labelcolor=lr_color)
             ax2.set_yscale("log")
@@ -938,14 +1089,17 @@ def plot_loss_lr_dual(
             max_epochs = max(max_epochs, len(lr_mean))
     for ax in axes:
         ax.set_xlim(0, max_epochs)
+        ax.xaxis.set_major_locator(MultipleLocator(10))
 
     # Add overall figure title with subtitle
-    add_figure_title(
-        fig,
-        title=f"{problem_type.upper()} - Loss & Learning Rate Dual Axis",
-        subtitle="Each subplot: Loss (left axis) + LR (right axis, dotted)"
-    )
-    
+    # add_figure_title(
+    #     fig,
+    #     title=f"{problem_type.upper()} - Loss & Learning Rate Dual Axis",
+    #     subtitle="Each subplot: Loss (left axis) + LR (right axis, dotted)"
+    # )
+
+    fig.tight_layout()
+
     if save_path:
         _save(fig, save_path)
     if show:
@@ -955,10 +1109,8 @@ def plot_loss_lr_dual(
 
 # ── Analytical Plot B: Heatmap ───────────────────────────────────
 
-_LOWER_IS_BETTER = {
-    "E_target", "suboptimality_gap", "AUL",
-    "CV", "test_loss"
-}
+_LOWER_IS_BETTER = {"E_target", "suboptimality_gap", "AUL", "CV", "test_loss"}
+
 
 def _get_heatmap_style(metric: str) -> dict:
     """Returns kwargs for sns.heatmap based on metric semantics."""
@@ -966,13 +1118,15 @@ def _get_heatmap_style(metric: str) -> dict:
     # Palette Accademica Single-Tone: Colore più scuro = Risultato Migliore
     if metric in _LOWER_IS_BETTER:
         return {"cmap": "Blues_r"}  # Basso = scuro, Alto = chiaro
-    
-    return {"cmap": "Greens"}        # Alto = scuro, Basso = chiaro
+
+    return {"cmap": "Greens"}  # Alto = scuro, Basso = chiaro
+
 
 def _get_direction_label(metric: str) -> str:
     if metric in _LOWER_IS_BETTER:
         return "↓ lower is better"
     return "↑ higher is better"
+
 
 def _robust_colorscale(matrix: np.ndarray) -> tuple[float, float]:
     """
@@ -1016,10 +1170,11 @@ def _robust_colorscale(matrix: np.ndarray) -> tuple[float, float]:
 
     return vmin, vmax
 
+
 def _outlier_mask_iqr(matrix: np.ndarray, k: float = 1.5) -> np.ndarray:
     if np.isnan(matrix).all():
         return np.zeros_like(matrix, dtype=bool)
-        
+
     q1 = np.nanpercentile(matrix, 25)
     q3 = np.nanpercentile(matrix, 75)
     iqr = q3 - q1
@@ -1054,10 +1209,12 @@ def plot_scheduler_optimizer_heatmap(
         if metric not in df.columns:
             if f"{metric}_mean" in df.columns:
                 metric_col = f"{metric}_mean"
-            elif metric == "E_target" and "EtT_mean" in df.columns: # fallback mapping
+            elif metric == "E_target" and "EtT_mean" in df.columns:  # fallback mapping
                 metric_col = "EtT_mean"
             else:
-                print(f"Warning: Metric '{metric}' (or '{metric}_mean') not found in data. Skipping.")
+                print(
+                    f"Warning: Metric '{metric}' (or '{metric}_mean') not found in data. Skipping."
+                )
                 continue
 
         fig, ax = plt.subplots(1, 1, figsize=(8, 6))
@@ -1078,7 +1235,7 @@ def plot_scheduler_optimizer_heatmap(
         # 3. Costruzione della matrice di annotazione testuale (gestisce NaN format)
         def format_cell(val: float, is_outlier: bool) -> str:
             if pd.isna(val):
-                return "NaN" # Più esplicito di stringa vuota per indicare che non è esploso
+                return "NaN"  # Più esplicito di stringa vuota per indicare che non è esploso
             # Usa 0 decimali se il numero è intero, 4 se è un float
             num_str = f"{val:.0f}" if float(val).is_integer() else f"{val:.4f}"
             return f"{num_str}*" if is_outlier else num_str
@@ -1087,11 +1244,17 @@ def plot_scheduler_optimizer_heatmap(
 
         # 4. Rendering Heatmap
         sns.heatmap(
-            matrix, vmin=vmin, vmax=vmax, annot=annot_matrix, fmt="",
-            xticklabels=x_labels, yticklabels=y_labels,
-            ax=ax, **style
+            matrix,
+            vmin=vmin,
+            vmax=vmax,
+            annot=annot_matrix,
+            fmt="",
+            xticklabels=x_labels,
+            yticklabels=y_labels,
+            ax=ax,
+            **style,
         )
-        
+
         ax.set_title(f"{problem_type.upper()} — {metric} ({direction})")
         ax.set_xlabel("Optimizer")
         ax.set_ylabel("Scheduler")
@@ -1102,14 +1265,17 @@ def plot_scheduler_optimizer_heatmap(
             heatmap_path = str(save_path).replace(".png", f"_{metric.lower()}.png")
             plt.savefig(heatmap_path, bbox_inches="tight", dpi=300)
             saved_files.append(heatmap_path)
-            
+
         if show:
             plt.show()
-            
+
         plt.close(fig)
 
     return saved_files
+
+
 # ── Entry Point: plot_all ────────────────────────────────────────
+
 
 def plot_all(
     results_by_problem: dict,
@@ -1144,58 +1310,65 @@ def plot_all(
     save_dir.mkdir(parents=True, exist_ok=True)
 
     logger.info(f"Generating all plots for: {problem_type}")
-    
+
     saved_files = []
-    
+
     # Level 1: Global Comparison
     plot_global_comparison(
-        results_by_problem, aggregated, problem_type,
+        results_by_problem,
+        aggregated,
+        problem_type,
         L_star=L_star_global,
         L0=L0,
         e_target_epsilon=e_target_epsilon,
         save_path=save_dir / f"{problem_type}_level1_global_comparison.png",
-        show=show
+        show=show,
     )
     saved_files.append(str(save_dir / f"{problem_type}_level1_global_comparison.png"))
-    
+
     # Level 2: By Optimizer (2x2 layout) - with E_target threshold if available
     plot_by_optimizer(
-        results_by_problem, aggregated, problem_type,
+        results_by_problem,
+        aggregated,
+        problem_type,
         L_star=L_star_global,
         L0=L0,
         e_target_epsilon=e_target_epsilon,
         save_path=save_dir / f"{problem_type}_level2_by_optimizer.png",
-        show=show
+        show=show,
     )
     saved_files.append(str(save_dir / f"{problem_type}_level2_by_optimizer.png"))
-    
+
     # Level 3: Seed Variance - with E_target threshold if available
     plot_seed_variance(
-        results_by_problem, problem_type,
+        results_by_problem,
+        problem_type,
         L_star_global=L_star_global,
         L0=L0,
         e_target_epsilon=e_target_epsilon,
         save_path=save_dir / f"{problem_type}_level3_seed_variance.png",
-        show=show
+        show=show,
     )
     saved_files.append(str(save_dir / f"{problem_type}_level3_seed_variance.png"))
-    
+
     # Level 4: Final Performance
     plot_final_performance(
-        aggregated, problem_type,
+        aggregated,
+        problem_type,
         save_path=save_dir / f"{problem_type}_level4_final_performance.png",
-        show=show
+        show=show,
     )
     saved_files.append(str(save_dir / f"{problem_type}_level4_final_performance.png"))
-    
+
     # Analytical A: Loss + LR Dual
     plot_loss_lr_dual(
-        results_by_problem, aggregated, problem_type,
+        results_by_problem,
+        aggregated,
+        problem_type,
         save_path=save_dir / f"{problem_type}_analytical_a_loss_lr_dual.png",
-        show=show
+        show=show,
     )
     saved_files.append(str(save_dir / f"{problem_type}_analytical_a_loss_lr_dual.png"))
 
-    
     logger.info(f"All plots saved for: {problem_type}")
     return saved_files

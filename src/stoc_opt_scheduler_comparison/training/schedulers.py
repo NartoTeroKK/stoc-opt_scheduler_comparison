@@ -1,6 +1,7 @@
 """
 LR schedulers - get_scheduler() factory + NoneScheduler baseline.
 """
+
 from __future__ import annotations
 
 import inspect
@@ -8,7 +9,13 @@ from typing import Any, Dict, Optional
 
 from torch import Tensor
 import torch.optim as optim
-from torch.optim.lr_scheduler import _LRScheduler, ExponentialLR, CosineAnnealingLR, CyclicLR, OneCycleLR
+from torch.optim.lr_scheduler import (
+    _LRScheduler,
+    ExponentialLR,
+    CosineAnnealingLR,
+    CyclicLR,
+    OneCycleLR,
+)
 
 
 class NoneScheduler(_LRScheduler):
@@ -55,7 +62,7 @@ def get_dynamic_scheduler_params(
 ) -> Dict[str, Any]:
     """
     Calcola e inietta i parametri dinamici e contestuali per gli scheduler di PyTorch.
-    
+
     Args:
         scheduler_name: Nome dello scheduler (es. "exponential", "one-cycle").
         lr: Learning rate base dell'ottimizzatore.
@@ -75,7 +82,9 @@ def get_dynamic_scheduler_params(
     # ──────────────────────────────────────────────────────────────────
 
     if scheduler_name == "exponential":
-        target_drop = exponential_target_drop  # Target drop factor (10x reduction of initial lr)
+        target_drop = (
+            exponential_target_drop  # Target drop factor (10x reduction of initial lr)
+        )
         gamma = (1.0 / target_drop) ** (1.0 / epochs)
         sched_params["gamma"] = gamma
 

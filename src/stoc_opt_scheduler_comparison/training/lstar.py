@@ -5,6 +5,7 @@ Two protocols:
 - Convex (logistic regression): L-BFGS solver to find analytical global minimum.
 - Non-convex (MLP on MNIST): Extended run of best config + LR decay -> reference empirical minimum.
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -13,49 +14,18 @@ import torch.nn as nn
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import log_loss
 
-from stoc_opt_scheduler_comparison.data_load.loaders import load_breast_cancer_wrapper, get_dataloaders
+from stoc_opt_scheduler_comparison.data_load.loaders import (
+    load_breast_cancer_wrapper,
+    get_dataloaders,
+)
 from stoc_opt_scheduler_comparison.models.architectures import create_model
 from stoc_opt_scheduler_comparison.training.engine import train_one_epoch, evaluate
 from stoc_opt_scheduler_comparison.training.optimizers import get_optimizer
-from stoc_opt_scheduler_comparison.training.schedulers import get_dynamic_scheduler_params, get_scheduler
+from stoc_opt_scheduler_comparison.training.schedulers import (
+    get_dynamic_scheduler_params,
+    get_scheduler,
+)
 from stoc_opt_scheduler_comparison.evaluation.metrics import TrainingHistory
-
-
-def compute_convex_L_star(
-    test_size: float = 0.2,
-    tollerance: float = 1e-9,
-    max_iter: int = 500,
-    seed: int = 42,
-) -> float:
-    """
-    Compute the exact global minimum loss (L*) for convex logistic regression
-    on the Breast Cancer dataset using L-BFGS full-batch optimization.
-
-    Uses sklearn's LogisticRegression with L-BFGS solver (deterministic,
-    second-order quasi-Newton method) to find the unique global minimum.
-
-    Args:
-        test_size: Train/test split ratio.
-        seed: Random seed for reproducibility.
-
-    Returns:
-        L_star: Cross-entropy loss at the global minimum.
-    """
-    ds = load_breast_cancer_wrapper(test_size=test_size, seed=seed)
-
-    clf = LogisticRegression(
-        solver='lbfgs',
-        penalty=None,
-        max_iter=max_iter,
-        tol=tollerance,
-        random_state=seed,
-    )
-    clf.fit(ds.X_train, ds.y_train)
-
-    y_pred_proba = clf.predict_proba(ds.X_train)
-    L_star = log_loss(ds.y_train, y_pred_proba)
-
-    return float(L_star)
 
 
 def _find_best_config(results_by_problem: dict) -> tuple[str, str, float]:
@@ -87,7 +57,7 @@ def compute_empirical_L_star(
     lr_config: dict | float,
     device: torch.device,
     extended_epochs: int = 200,
-    use_lr_decay: bool = True,     
+    use_lr_decay: bool = True,
     lr_decay_factor: float = 0.5,
     lr_decay_interval: int = 10,
     seed: int = 42,
@@ -147,7 +117,7 @@ def compute_empirical_L_star(
     optimizer = get_optimizer(model, name=best_opt, lr=lr)
 
     sched_params = dict(scheduler_params.get(best_sched, {}))
-    
+
     # Ottieni la lunghezza del dataloader (steps per epoch)
     steps = len(dataloaders["train"])
 
@@ -157,7 +127,7 @@ def compute_empirical_L_star(
         lr=lr,
         epochs=extended_epochs,
         steps_per_epoch=steps,
-        base_sched_params=sched_params
+        base_sched_params=sched_params,
     )
 
     scheduler = get_scheduler(optimizer, name=best_sched, **sched_params)
@@ -170,12 +140,21 @@ def compute_empirical_L_star(
 
     for epoch in range(extended_epochs):
         train_loss, train_acc, _ = train_one_epoch(
-            model, dataloaders["train"], criterion,
-            optimizer, scheduler, best_sched, device,
+            model,
+            dataloaders["train"],
+            criterion,
+            optimizer,
+            scheduler,
+            best_sched,
+            device,
         )
 
         # ─── LOGICA DI DECAY CONDIZIONALE ──────────────────────────────────────
-        if use_lr_decay and epoch >= decay_epoch and (epoch - decay_epoch) % lr_decay_interval == 0:
+        if (
+            use_lr_decay
+            and epoch >= decay_epoch
+            and (epoch - decay_epoch) % lr_decay_interval == 0
+        ):
             for param_group in optimizer.param_groups:
                 param_group["lr"] *= lr_decay_factor
         # ───────────────────────────────────────────────────────────────────────

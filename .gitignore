@@ -54,3 +54,7 @@ docs/agent/
 AGENTS.md
 .tmp/
 .github/
+
+.ruff_cache/
+
+reports/figures/*

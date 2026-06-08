@@ -1,4 +1,5 @@
 """Visualization module."""
+
 from .plots import (
     plot_all,
     plot_global_comparison,

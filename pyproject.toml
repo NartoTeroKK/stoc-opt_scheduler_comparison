@@ -14,7 +14,6 @@ dependencies = [
     "notebook",
     "ipykernel",
     "pyyaml",
-    "pytest>=9.0.3",
 ]
 
 [build-system]
@@ -29,3 +28,16 @@ egg_base = "build"
 
 [tool.uv.sources]
 stoc-opt-scheduler-comparison = { path = ".", editable = true }
+
+[dependency-groups]
+dev = [
+    "deptry>=0.25.1",
+    "ruff>=0.15.16",
+    "pytest>=9.0.3",
+]
+
+[tool.deptry]
+known_first_party = ["stoc_opt_scheduler_comparison"]
+
+[tool.deptry.per_rule_ignores]
+DEP002 = ["notebook", "ipykernel"]

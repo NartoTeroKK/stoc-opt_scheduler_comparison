@@ -1,6 +1,7 @@
 """
 MLflow tracking manager - MLflowLogger for experiment lifecycle management.
 """
+
 from __future__ import annotations
 
 from contextlib import contextmanager
@@ -8,6 +9,9 @@ from pathlib import Path
 from typing import Any
 
 import mlflow
+
+from collections import defaultdict
+from stoc_opt_scheduler_comparison.evaluation.metrics import TrainingHistory
 
 
 def _flatten_dict(
@@ -99,8 +103,11 @@ class MLflowLogger:
 
         if history.test_metrics:
             mlflow.log_metrics(
-                {f"test_{k}": v for k, v in history.test_metrics.items()
-                 if isinstance(v, (int, float))}
+                {
+                    f"test_{k}": v
+                    for k, v in history.test_metrics.items()
+                    if isinstance(v, (int, float))
+                }
             )
 
     @staticmethod
@@ -134,9 +141,6 @@ class MLflowLogger:
                 except (TypeError, AttributeError):
                     pass
         mlflow.log_params(info)
-
-from collections import defaultdict
-from stoc_opt_scheduler_comparison.evaluation.metrics import TrainingHistory 
 
 
 def load_results_from_mlflow(
@@ -178,18 +182,18 @@ def load_results_from_mlflow(
         if "problem_type" not in params:
             continue
 
-        problem_type  = params["problem_type"]       # "convex" | "non-convex"
-        scheduler     = params["scheduler"]
-        optimizer     = params["optimizer"]
-        seed          = params["seed"]
-        run_id        = run.info.run_id
-        run_name      = f"{problem_type}_{scheduler}_{optimizer}_{seed}"
+        problem_type = params["problem_type"]  # "convex" | "non-convex"
+        scheduler = params["scheduler"]
+        optimizer = params["optimizer"]
+        seed = params["seed"]
+        run_id = run.info.run_id
+        run_name = f"{problem_type}_{scheduler}_{optimizer}_{seed}"
 
         # --- Reconstruct per-epoch metric history ---
         # MLflow stores metrics per step; fetch all metric history
-        train_losses     = _fetch_metric_history(client, run_id, "train_loss")
+        train_losses = _fetch_metric_history(client, run_id, "train_loss")
         train_accuracies = _fetch_metric_history(client, run_id, "train_accuracy")
-        learning_rates   = _fetch_metric_history(client, run_id, "lr")
+        learning_rates = _fetch_metric_history(client, run_id, "lr")
 
         # --- Reconstruct test_metrics from final logged test_ metrics ---
         test_metrics = {

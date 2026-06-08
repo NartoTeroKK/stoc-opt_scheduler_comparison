@@ -1,6 +1,7 @@
 """
 Evaluation metrics - TrainingHistory, accuracy, confusion matrix, stability.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -22,6 +23,7 @@ class TrainingHistory:
         history.set_test_metrics({"loss": 0.4, "accuracy": 0.88})
         history.to_arrays()  # Convert to numpy arrays after training
     """
+
     train_losses: list[float] = field(default_factory=list)
     train_accuracies: list[float] = field(default_factory=list)
     learning_rates: list[float] = field(default_factory=list)

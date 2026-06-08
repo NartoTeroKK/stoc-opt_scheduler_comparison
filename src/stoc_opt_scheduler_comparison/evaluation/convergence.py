@@ -6,12 +6,14 @@ Metrics (from methodology):
   - Suboptimality gap:     Δ = L_T* − L*
   - AUL (Area Under Loss): trapezoidal integral of loss curve
   - CV (Coefficient of Variation): σ/μ over full or post-warmup loss curve
-  - Gradient norm statistics: mean and std of gradient ℓ2-norm per epoch
+  - Gradient norm magnitude/stability: two-level pooled aggregation
+    (per-seed μ, v → cross-seed μ_G = mean(μ), σ_G = √mean(v))
   - Convergence rate:      proportion of runs reaching L_target
 
 All metrics are computed per-seed first, then aggregated (mean ± std).
 Non-converging runs are excluded from EtT statistics.
 """
+
 from __future__ import annotations
 
 from collections import defaultdict
@@ -30,21 +32,6 @@ ETT_EPSILON = 0.05
 
 # ── L₀ / L* helpers ───────────────────────────────────────────────────────
 
-def compute_global_L_star(results_by_problem: dict) -> float:
-    """Global minimum loss across all runs for a problem type.
-
-    Returns:
-        Smallest train loss observed across every seed and configuration.
-        Returns NaN when there are no valid runs.
-    """
-    best_loss = float("inf")
-    for history in results_by_problem.values():
-        if history is not None and history.train_losses:
-            run_min = min(history.train_losses)
-            if run_min < best_loss:
-                best_loss = run_min
-    return best_loss if best_loss < float("inf") else float("nan")
-
 
 def compute_global_initial_loss(results_by_problem: dict) -> float:
     """Mean of the first-epoch loss across all runs (L₀).
@@ -61,12 +48,15 @@ def compute_global_initial_loss(results_by_problem: dict) -> float:
     return float(np.mean(losses))
 
 
-def compute_target_loss(L_star: float, L0: float, epsilon: float = ETT_EPSILON) -> float:
+def compute_target_loss(
+    L_star: float, L0: float, epsilon: float = ETT_EPSILON
+) -> float:
     """Target loss: L* + ε · (L₀ − L*)."""
     return L_star + epsilon * (L0 - L_star)
 
 
 # ── Per-seed metric functions ─────────────────────────────────────────────
+
 
 def epochs_to_target(loss_curve: FloatArray, L_target: float, max_epochs: int) -> int:
     """Earliest epoch where loss ≤ L_target.
@@ -90,7 +80,7 @@ def area_under_loss(loss_curve: FloatArray) -> float:
     return float(np.trapezoid(loss_curve, x=np.arange(len(loss_curve))))
 
 
-def coefficient_of_variation(loss_curve: FloatArray, t0: int = 0) -> float:
+def coefficient_of_variation(loss_curve: FloatArray, t0: int = 5) -> float:
     """σ/μ over loss_curve[t₀:] (default: full curve).
 
     Args:
@@ -110,16 +100,24 @@ def coefficient_of_variation(loss_curve: FloatArray, t0: int = 0) -> float:
 
 
 def gradient_norm_statistics(grad_norms: FloatArray) -> tuple[float, float]:
-    """Mean and std of per-epoch gradient ℓ2-norms.
+    """Per-seed gradient norm statistics.
+
+    Returns (mean, sample_variance) of the per-epoch gradient ℓ2-norm sequence.
+
+    - mean:      μ = (1/S) Σ g_s
+    - variance:  v = (1/(S-1)) Σ (g_s − μ)²   (sample variance, ddof=1)
 
     Returns (NaN, NaN) when *grad_norms* is empty (e.g. not logged).
     """
     if len(grad_norms) == 0:
         return float("nan"), float("nan")
-    return float(np.mean(grad_norms)), float(np.std(grad_norms, ddof=0))
+    mean = float(np.mean(grad_norms))
+    variance = float(np.var(grad_norms, ddof=1))
+    return mean, variance
 
 
 # ── Run-name parsing ──────────────────────────────────────────────────────
+
 
 def _parse_run_name(name: str) -> tuple[str, str, str, int] | None:
     """Parse ``convex_cosine_sgd_42`` → (problem, scheduler, optimizer, seed)."""
@@ -131,6 +129,7 @@ def _parse_run_name(name: str) -> tuple[str, str, str, int] | None:
 
 # ── Batch processing ──────────────────────────────────────────────────────
 
+
 def compute_all_metrics(
     loss_curve: FloatArray,
     train_accuracies: FloatArray,
@@ -138,7 +137,8 @@ def compute_all_metrics(
     L_star_global: float,
     L_target: float,
     max_epochs: int,
-    t0_cv: int = 0,
+    t0_cv: int = 5,
+    gradient_norms_arr: FloatArray | None = None,
 ) -> dict:
     """All convergence metrics for a single run.
 
@@ -152,6 +152,12 @@ def compute_all_metrics(
     subopt = suboptimality_gap(loss_curve, L_star_global)
     cv = coefficient_of_variation(loss_curve, t0=t0_cv)
 
+    grad_mean, grad_var = gradient_norm_statistics(
+        gradient_norms_arr
+        if gradient_norms_arr is not None
+        else np.array([], dtype=float)
+    )
+
     return {
         "train_losses_arr": loss_curve,
         "train_accuracies_arr": train_accuracies,
@@ -161,10 +167,10 @@ def compute_all_metrics(
         "AUL": round(aul, 6),
         "suboptimality_gap": round(subopt, 8),
         "CV": round(cv, 6),
-        # Gradient norm statistics (filled by caller when available)
-        "mean_gradient_norm": float("nan"),
-        "std_gradient_norm": float("nan"),
-        # Test metrics (filled by caller)
+        # Per-seed gradient norm intermediates (pooled at Level 2)
+        "gradient_norm_mean": round(grad_mean, 6),
+        "gradient_norm_variance": round(grad_var, 6),
+        # Test metrics (filled by caller when available)
         "test_loss": 0.0,
         "test_accuracy": 0.0,
     }
@@ -207,6 +213,8 @@ def compute_convergence_metrics(
 
         _, sched, opt, seed = parsed
 
+        grad_norms = history.grad_norms_arr
+
         m = compute_all_metrics(
             loss_curve=history.train_losses_arr,
             train_accuracies=history.train_accuracies_arr,
@@ -214,6 +222,8 @@ def compute_convergence_metrics(
             L_star_global=L_star,
             L_target=L_target,
             max_epochs=max_epochs,
+            t0_cv=5,
+            gradient_norms_arr=grad_norms,
         )
 
         test_metrics = history.test_metrics
@@ -230,6 +240,7 @@ def compute_convergence_metrics(
 
 # ── Aggregation ───────────────────────────────────────────────────────────
 
+
 def _is_valid(v) -> bool:
     """True for finite numeric values; False for None, NaN, Inf."""
     if v is None:
@@ -244,8 +255,6 @@ SCALAR_METRICS = [
     "AUL",
     "suboptimality_gap",
     "CV",
-    "mean_gradient_norm",
-    "std_gradient_norm",
     "test_loss",
     "test_accuracy",
 ]
@@ -280,6 +289,23 @@ def aggregate_metrics(metrics_dict: dict[str, dict]) -> dict:
             if values:
                 agg[f"{metric_key}_mean"] = float(np.mean(values))
                 agg[f"{metric_key}_std"] = float(np.std(values))
+
+        # -- Gradient norm statistics: two-level pooled aggregation --
+        #   magnitude = mean of per-seed means  (μ_G = (1/K) Σ μ⁽ᵏ⁾)
+        #   stability = sqrt(mean of per-seed variances)  (σ_G = √((1/K) Σ v⁽ᵏ⁾))
+        gn_means = [
+            m["gradient_norm_mean"]
+            for m in group
+            if _is_valid(m.get("gradient_norm_mean"))
+        ]
+        gn_vars = [
+            m["gradient_norm_variance"]
+            for m in group
+            if _is_valid(m.get("gradient_norm_variance"))
+        ]
+        if gn_means and gn_vars:
+            agg["gradient_norm_magnitude"] = float(np.mean(gn_means))
+            agg["gradient_norm_stability"] = float(np.sqrt(np.mean(gn_vars)))
 
         # -- EtT: converging runs only + convergence rate --
         ett_all = [m["EtT"] for m in group if "EtT" in m]
