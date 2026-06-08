@@ -30,10 +30,6 @@ data/processed/
 
 # ── Risultati e plot temporanei ──────────────────────────
 results/
-test_plots/
-test_plots_final/
-test_plots_v2/
-test_plots_v3/
 
 # ── IDE e OS ─────────────────────────────────────────────
 .idea/
@@ -57,4 +53,4 @@ AGENTS.md
 
 .ruff_cache/
 
-reports/figures/*
+reports/figures/
