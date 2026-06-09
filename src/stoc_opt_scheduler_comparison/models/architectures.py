@@ -1,5 +1,5 @@
 """
-Model architectures - LogisticRegression, MLP, SimpleCNN + create_model() factory.
+Model architectures - LogisticRegression, MLP + create_model() factory.
 """
 
 from __future__ import annotations

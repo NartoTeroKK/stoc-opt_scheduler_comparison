@@ -1021,7 +1021,7 @@ def plot_loss_lr_dual(
     """
     _setup_style()
 
-    fig, axes = plt.subplots(5, 2, figsize=(12, 20), sharex=True)
+    fig, axes = plt.subplots(5, 2, figsize=(12, 20), sharex=True, sharey=True)
     axes = axes.flatten() if hasattr(axes, "flatten") else axes.ravel()
 
     for idx, (opt, sched) in enumerate(
@@ -1071,7 +1071,9 @@ def plot_loss_lr_dual(
             )
             ax2.set_ylabel("Learning Rate", color=lr_color)
             ax2.tick_params(axis="y", labelcolor=lr_color)
-            ax2.set_yscale("log")
+            # ax2.set_yscale("log")
+            ax2.grid(False)
+            ax2.set_ylim(bottom=1e-6, top=None)
 
         ax.set_title(f"{opt.upper()} - {sched}")
         ax.set_xlabel("Epoch")
@@ -1090,6 +1092,7 @@ def plot_loss_lr_dual(
     for ax in axes:
         ax.set_xlim(0, max_epochs)
         ax.xaxis.set_major_locator(MultipleLocator(10))
+        ax.set_ylim(bottom=0, top=None)
 
     # Add overall figure title with subtitle
     # add_figure_title(
